@@ -25,23 +25,21 @@
 </head>
 <body>
   <div id="app">
-    <!-- Deine bestehende HTML-Struktur kann hier rein;
-         minimaler Platzhalter für Start -->
-    <div v-if="!user.loggedIn" class="landing-form card">
-      <div>
-      <img class="logo" src="images/logo.png" alt="Logo" />
-      <h2>Login</h2>
-      <input v-model="form.email" type="email" autocomplete="username" placeholder="Email">
-      <input v-model="form.password" type="password" autocomplete="current-password" placeholder="Passwort">
-      <button @click="doLogin">Login</button>
-      <p class="auth-switch">Noch kein Account? <span @click="doRegister">Registrieren</span></p>
+      <div v-if="!user.loggedIn" class="landing-form card">
+        <div>
+          <img class="logo" src="images/logo.png" alt="Logo" />
+          <h2>Login</h2>
+          <input v-model="form.email" type="email" autocomplete="username" placeholder="Email">
+          <input v-model="form.password" type="password" autocomplete="current-password" placeholder="Passwort">
+          <button @click="doLogin">Login</button>
+          <p class="auth-switch">Noch kein Account? <span @click="doRegister">Registrieren</span></p>
+        </div>
+        <div>
+          <footer class="footer-banner">
+          <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
+          </footer>
+        </div>
       </div>
-      <div>
-                  <footer class="footer-banner">
-                <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
-            </footer>
-            </div>
-    </div>
 
         <div v-if="user.loggedIn" class="app-container">
             <header class="app-header">
@@ -317,7 +315,7 @@
                 </div>
             </div>
         </div>
-        
+
         <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
             <div class="settings-window" @click.stop>
                 <div class="settings-header">
