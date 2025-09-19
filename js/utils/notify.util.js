@@ -1,12 +1,22 @@
 import { db } from '../services/firebase-config.js';
 
-export function playSoundAndVibrate() {
+export async function playSoundAndVibrate() {
   try {
-    if (Tone.context.state !== 'running') Tone.start();
-    const synth = new Tone.Synth().toDestination();
-    synth.triggerAttackRelease("C4", "8n");
-  } catch (e) { /* noop */ }
-  if ('vibrate' in navigator) navigator.vibrate([200, 100, 200]);
+    // Warten, falls AudioContext noch nicht gestartet
+    if (window.__audioReady) await window.__audioReady();
+
+    // Beispiel: kurzer Beep über Tone.js
+    if (window.Tone) {
+      const synth = new Tone.Synth().toDestination();
+      await Tone.loaded();             // Samples/Nodes geladen
+      synth.triggerAttackRelease("C5", "8n");
+    }
+
+    // Vibrations-Feedback (falls unterstützt)
+    if (navigator.vibrate) navigator.vibrate(80);
+  } catch (e) {
+    console.warn("Audio/Vibrate failed:", e);
+  }
 }
 
 export async function notifyFriendsIfReachedLimit(uid, displayNameOrEmail, threshold) {

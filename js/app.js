@@ -38,6 +38,7 @@ const app = Vue.createApp({
   data() {
     return {
       isLogin: true,
+      _isLogging: false,
       user: { loggedIn: false, uid: null, email: null },
       currentView: "dashboard",
       showMenu: false,
@@ -150,7 +151,9 @@ const app = Vue.createApp({
         });
       if (view === "dashboard" || view === "statistics") this.refreshStats();
     },
-
+    toggleNotifications() {
+      this.showNotifications = !this.showNotifications;
+    },
     // --- Init ---
     async initAppFeatures() {
       this.listenForNotifications(); // unverändert unten
@@ -233,55 +236,107 @@ const app = Vue.createApp({
 
     // --- Konsum + Benachrichtigung ---
     async logConsumption() {
-      if (!this.selection.product || !this.selection.device) {
-        this.alertMessage = "Bitte wähle ein Produkt und ein Gerät aus.";
-        this.showAlert = true;
-        return;
-      }
-      // Tageslimit prüfen
-      const today = new Date();
-      const start = new Date(
-        today.getFullYear(),
-        today.getMonth(),
-        today.getDate()
-      );
-      const q = await db
-        .collection("consumptions")
-        .where("userId", "==", this.user.uid)
-        .where("timestamp", ">=", start)
-        .get();
-      if (q.docs.length >= this.settings.consumptionThreshold) {
-        this.alertMessage = `Du hast dein Tageslimit von ${this.settings.consumptionThreshold} Einheiten erreicht!`;
-        this.showAlert = true;
-        playSoundAndVibrate();
-        return;
-      }
+      try {
+        if (this._isLogging) return; // Doppelklick-Schutz
+        this._isLogging = true;
 
-      // Standort + Log
-      navigator.geolocation.getCurrentPosition(
-        async (pos) => {
+        if (!this.selection.product || !this.selection.device) {
+          this.alertMessage = "Bitte wähle ein Produkt und ein Gerät aus.";
+          this.showAlert = true;
+          return;
+        }
+        if (!this.user || !this.user.uid) {
+          this.alertMessage = "Nicht eingeloggt – bitte erneut anmelden.";
+          this.showAlert = true;
+          return;
+        }
+
+        // Tageslimit prüfen
+        const today = new Date();
+        const start = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate()
+        );
+
+        let q;
+        try {
+          q = await db
+            .collection("consumptions")
+            .where("userId", "==", this.user.uid)
+            .where("timestamp", ">=", start)
+            .get();
+        } catch (e) {
+          console.error("Firestore-Query-Fehler:", e);
+          this.alertMessage =
+            "Fehler beim Laden der Tagesdaten (evtl. Index/Security Rules). Schau in die Konsole.";
+          this.showAlert = true;
+          return;
+        }
+
+        if (q.docs.length >= this.settings.consumptionThreshold) {
+          this.alertMessage = `Du hast dein Tageslimit von ${this.settings.consumptionThreshold} Einheiten erreicht!`;
+          this.showAlert = true;
+          playSoundAndVibrate();
+          return;
+        }
+
+        // Standort abrufen (mit Fallback wenn blockiert)
+        const getPosition = () =>
+          new Promise((resolve) => {
+            if (!("geolocation" in navigator)) return resolve(null);
+            navigator.geolocation.getCurrentPosition(
+              (pos) => resolve(pos),
+              (err) => {
+                console.warn("Geolocation-Fehler:", err);
+                resolve(null); // << Fallback: loggen ohne Standort
+              },
+              { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+            );
+          });
+
+        const pos = await getPosition();
+
+        // Firestore-Write
+        try {
           await db.collection("consumptions").add({
             userId: this.user.uid,
             product: this.selection.product,
             device: this.selection.device,
-            location: { lat: pos.coords.latitude, lng: pos.coords.longitude },
+            location: pos
+              ? { lat: pos.coords.latitude, lng: pos.coords.longitude }
+              : null,
             timestamp: new Date(),
           });
-          this.selection = { product: null, device: null };
+        } catch (e) {
+          console.error("Firestore-Write-Fehler:", e);
+          this.alertMessage =
+            "Speichern fehlgeschlagen (Security Rules/Offline/Quota?). Details in der Konsole.";
+          this.showAlert = true;
+          return;
+        }
+
+        // UI reset + Benachrichtigung
+        this.selection = { product: null, device: null };
+
+        try {
           await notifyFriendsIfReachedLimit(
             this.user.uid,
             this.userData.displayName || this.user.email,
             this.settings.consumptionThreshold
           );
-          this.refreshStats();
-        },
-        () => {
-          this.alertMessage =
-            "Standort konnte nicht abgerufen werden. Bitte erlaube den Zugriff.";
-          this.showAlert = true;
-        },
-        { enableHighAccuracy: true }
-      );
+        } catch (e) {
+          console.warn("notifyFriendsIfReachedLimit Fehler:", e);
+        }
+
+        await this.refreshStats();
+
+        // Optional: kleines Feedback
+        this.alertMessage = "Eintrag gespeichert.";
+        this.showAlert = true;
+      } finally {
+        this._isLogging = false;
+      }
     },
 
     // --- Statistik ---
@@ -320,6 +375,9 @@ const app = Vue.createApp({
     },
 
     // --- Events ---
+    voteEvent(id, dir) {
+      return voteEvent(id, this.user.uid, dir);
+    },
     voteEventUp(id) {
       return voteEvent(id, this.user.uid, "up");
     },
@@ -350,6 +408,40 @@ const app = Vue.createApp({
     },
     declineRequest(id) {
       return declineRequest(id);
+    },
+
+    //-- Chat ---
+    shareProfile() {
+      const text = `Mein Freundschaftscode: ${this.user.uid}`;
+      if (navigator.share) return navigator.share({ text }).catch(() => {});
+      navigator.clipboard?.writeText(this.user.uid);
+      alert("Freundschaftscode kopiert!");
+    },
+    openChat(friend) {
+      this.activeChat.partner = friend;
+      this.activeChat.chatId = friend.id || friend.uid || `chat-${Date.now()}`;
+      this.activeChat.messages = [];
+      // TODO: hier echten Chat-Listener setzen
+    },
+    closeChat() {
+      if (this.activeChat.unsubscribe) this.activeChat.unsubscribe();
+      this.activeChat = {
+        chatId: null,
+        partner: null,
+        messages: [],
+        unsubscribe: null,
+      };
+    },
+    sendMessage() {
+      const txt = this.chatMessageInput?.trim();
+      if (!txt) return;
+      // TODO: echte Nachricht an Firestore senden
+      this.activeChat.messages.push({
+        id: Date.now(),
+        senderId: this.user.uid,
+        text: txt,
+      });
+      this.chatMessageInput = "";
     },
 
     // --- THC Rechner ---
