@@ -1,20 +1,20 @@
-// js/services/firebase-config.js
-// NOTE: Replace the firebaseConfig object with your real config.
-// Loads Firebase from CDN (v8) globals already included in index.html.
 const firebaseConfig = {
-  apiKey: "YOUR_API_KEY",
-  authDomain: "YOUR_PROJECT.firebaseapp.com",
-  projectId: "YOUR_PROJECT_ID",
-  storageBucket: "YOUR_PROJECT.appspot.com",
-  messagingSenderId: "YOUR_SENDER_ID",
-  appId: "YOUR_APP_ID"
+  apiKey: "AIzaSyCWLDRA3lOLWzf8unvKKOmhDZ1THyrGyTQ",
+  authDomain: "cannatrack-2486f.firebaseapp.com",
+  projectId: "cannatrack-2486f",
+  storageBucket: "cannatrack-2486f.appspot.com",
+  messagingSenderId: "873798957273",
+  appId: "1:873798957273:web:fe161382aa2d1b24d226c8"
 };
 
-if (!firebase.apps.length) {
-  firebase.initializeApp(firebaseConfig);
+// Robust, ohne optional chaining
+if (!window.firebase.apps || !window.firebase.apps.length) {
+  window.firebase.initializeApp(firebaseConfig);
 }
 
-export const db = firebase.firestore();
-export const auth = firebase.auth();
-export const FieldValue = firebase.firestore.FieldValue;
-export { firebase };
+const auth = window.firebase.auth();
+const db = window.firebase.firestore();
+const FieldValue = window.firebase.firestore.FieldValue;
+
+
+export { auth, db, FieldValue };

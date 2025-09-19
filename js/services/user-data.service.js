@@ -1,20 +1,27 @@
-// js/services/user-data.service.js
 import { db } from './firebase-config.js';
 
-export function loadUserData(uid) {
-  return db.collection('users').doc(uid).get()
-    .then(doc => ({ uid, ...(doc.data() || {}) }));
+export async function loadUserData(uid) {
+  const doc = await db.collection('users').doc(uid).get();
+  if (!doc.exists) return { displayName: '', phoneNumber: '', theme: 'light' };
+  const data = doc.data();
+  return {
+    displayName: data.displayName || '',
+    phoneNumber: data.phoneNumber || '',
+    theme: data.personalization?.theme || 'light'
+  };
 }
 
-export function saveUserData(uid, data) {
-  return db.collection('users').doc(uid).set(data, { merge: true });
+export async function saveUserData(uid, { displayName, phoneNumber, theme }) {
+  await db.collection('users').doc(uid).set({
+    displayName, phoneNumber, personalization: { theme }
+  }, { merge: true });
 }
 
-export function loadUserSettings(uid) {
-  return db.collection('settings').doc(uid).get()
-    .then(d => d.data() || {});
+export async function loadUserSettings(uid) {
+  const doc = await db.collection('users').doc(uid).get();
+  return { consumptionThreshold: doc.data()?.settings?.consumptionThreshold ?? 3 };
 }
 
-export function saveUserSettings(uid, settings) {
-  return db.collection('settings').doc(uid).set(settings, { merge: true });
+export async function saveUserSettings(uid, settings) {
+  await db.collection('users').doc(uid).set({ settings }, { merge: true });
 }

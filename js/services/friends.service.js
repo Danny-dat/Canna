@@ -1,43 +1,47 @@
-// js/services/friends.service.js
 import { db, FieldValue } from './firebase-config.js';
 
-/** Subscribe to incoming friend requests */
-export function listenRequests(uid, cb) {
-  return db.collection('friend_requests').where('to', '==', uid)
-    .onSnapshot(snap => {
-      const reqs = snap.docs.map(d => ({ id: d.id, ...d.data() }));
-      cb(reqs);
-    });
-}
-
-export async function sendRequest(currentUser, currentUserData, friendId) {
-  if (!friendId) throw new Error('No friend ID');
-  const payload = {
-    from: currentUser.uid,
-    to: friendId,
-    fromName: currentUserData?.username || currentUser.email,
+export async function sendFriendRequest({ fromUid, fromEmail, fromDisplayName, toUid }) {
+  const req = {
+    from: fromUid,
+    fromEmail,
+    fromDisplayName,
+    to: toUid,
     status: 'pending',
-    createdAt: new Date()
+    createdAt: new Date(),
+    participants: [fromUid, toUid]
   };
-  await db.collection('friend_requests').add(payload);
+  await db.collection('friend_requests').add(req);
 }
 
-export async function accept(request) {
+export async function fetchFriendRequests(uid) {
+  const snap = await db.collection('friend_requests')
+    .where('participants', 'array-contains', uid).get();
+
+  return snap.docs
+    .map(d => ({ id: d.id, ...d.data() }))
+    .filter(r => r.to === uid && r.status === 'pending');
+}
+
+export function listenForFriends(uid, cb) {
+  return db.collection('users').doc(uid).onSnapshot(async (doc) => {
+    if (!doc.exists || !doc.data().friends?.length) return cb([]);
+    const friendDocs = await Promise.all(
+      doc.data().friends.map(id => db.collection('users').doc(id).get())
+    );
+    const friends = friendDocs.filter(f => f.exists).map(f => ({ id: f.id, ...f.data() }));
+    cb(friends);
+  });
+}
+
+export async function acceptRequest(uid, request) {
   const batch = db.batch();
-  batch.update(db.collection('friend_requests').doc(request.id), { status: 'accepted' });
-  batch.update(db.collection('users').doc(request.to), { friends: FieldValue.arrayUnion(request.from) });
+  const reqRef = db.collection('friend_requests').doc(request.id);
+  const meRef  = db.collection('users').doc(uid);
+  batch.update(reqRef, { status: 'accepted' });
+  batch.update(meRef, { friends: FieldValue.arrayUnion(request.from) });
   await batch.commit();
 }
 
-export async function decline(requestId) {
-  await db.collection('friend_requests').doc(requestId).update({ status: 'declined' });
-}
-
-/** Subscribe to current friend list (example schema: users/<uid>.friends = [uids]) */
-export function listenFriends(uid, cb) {
-  return db.collection('users').doc(uid).onSnapshot(doc => {
-    const data = doc.data() || {};
-    const friends = data.friends || [];
-    cb(friends);
-  });
+export function declineRequest(id) {
+  return db.collection('friend_requests').doc(id).update({ status: 'declined' });
 }

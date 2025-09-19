@@ -3,37 +3,56 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <title>CANNA Modularized</title>
-  <style>
-    html, body, #map { height: 300px; margin: 0; }
-    #app { padding: 16px; }
-  </style>
-  <!-- Vue 2 -->
-  <script src="https://cdn.jsdelivr.net/npm/vue@2"></script>
-  <!-- Firebase v8 -->
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-app.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-auth.js"></script>
-  <script src="https://www.gstatic.com/firebasejs/8.10.1/firebase-firestore.js"></script>
+  <title>CANNA Track</title>
+
+  <link rel="icon" type="image/png" href="images/logo.png">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+  <!-- Vue 3 (global build) -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- Firebase 9 compat builds (v8 API surface) -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
   <!-- Leaflet -->
-  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
   <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-  <!-- Chart.js -->
+  <!-- QRCode, Chart.js, Tone.js -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
 </head>
 <body>
   <div id="app">
-    <div v-if="!user.loggedIn">
+    <!-- Deine bestehende HTML-Struktur kann hier rein;
+         minimaler Platzhalter für Start -->
+    <div v-if="!user.loggedIn" class="landing-form card">
+      <img class="logo" src="images/logo.png" alt="Logo" />
       <h2>Login</h2>
-      <input v-model="form.email" placeholder="Email">
-      <input v-model="form.password" placeholder="Password" type="password">
-      <button @click="login">Login</button>
-      <button @click="register">Register</button>
+      <input v-model="form.email" type="email" autocomplete="username" placeholder="Email">
+      <input v-model="form.password" type="password" autocomplete="current-password" placeholder="Passwort">
+      <button @click="doLogin">Login</button>
+      <p class="auth-switch">Noch kein Account? <span @click="doRegister">Registrieren</span></p>
     </div>
+
     <div v-else>
-      <button @click="logout">Logout</button>
-      <h2>Dashboard</h2>
-      <div id="map"></div>
-      <canvas id="statsChart"></canvas>
+      <div class="app-header card">
+        <h2>Dashboard</h2>
+        <div class="header-actions">
+          <i class="fas fa-bell notification-bell"></i>
+          <i class="fas fa-cog settings-icon"></i>
+          <button @click="doLogout">Logout</button>
+        </div>
+      </div>
+
+      <div class="card">
+        <div id="map"></div>
+      </div>
+
+      <div class="card">
+        <canvas id="statsChart"></canvas>
+      </div>
     </div>
   </div>
 
