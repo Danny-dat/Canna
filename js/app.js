@@ -129,19 +129,26 @@ const app = Vue.createApp({
     },
   },
 
-  mounted() {
-    onAuth(async (user) => {
-      if (user) {
-        this.user = { loggedIn: true, uid: user.uid, email: user.email };
-        await this.initAppFeatures();
-      } else {
-        this.user = { loggedIn: false, uid: null, email: null };
-        this.cleanupListeners();
-        applyTheme("light");
+mounted() {
+  onAuth(async (user) => {
+    if (user) {
+      this.user = { loggedIn: true, uid: user.uid, email: user.email };
+
+      try {
+        await syncFriendshipsOnLogin(user.uid);
+      } catch (e) {
+        console.warn("syncFriendshipsOnLogin failed:", e);
       }
-    });
-    this.startBannerRotation();
-  },
+
+      await this.initAppFeatures();
+    } else {
+      this.user = { loggedIn: false, uid: null, email: null };
+      this.cleanupListeners();
+      applyTheme("light");
+    }
+  });
+  this.startBannerRotation();
+},
 
   methods: {
     // ---------- Helpers ----------
