@@ -32,15 +32,3 @@ export function stopPresenceHeartbeat() {
     _heartbeatTimer = null;
   }
 }
-
-// Prüfen, ob Empfänger gerade in diesem Chat aktiv ist (Heartbeat frisch)
-export async function isRecipientActiveInChat(uid, chatId, withinMs = 15000) {
-  if (!uid || !chatId) return false;
-  const snap = await db.collection("presence").doc(uid).get().catch(() => null);
-  if (!snap?.exists) return false;
-  const d = snap.data() || {};
-  if (d.activeChatId !== chatId) return false;
-  const t = d.heartbeatAt?.toDate?.() ?? d.heartbeatAt;
-  if (!t) return false;
-  return Date.now() - new Date(t).getTime() < withinMs;
-}

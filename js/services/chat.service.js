@@ -1,9 +1,22 @@
 // services/chat.service.js
 import { db, FieldValue } from "./firebase-config.js";
-import { isRecipientActiveInChat } from "./presence.service.js";
 
 const TS = () => FieldValue?.serverTimestamp?.() ?? new Date();
 export const chatIdFor = (a, b) => [a, b].sort().join("_");
+
+// ---- Notification-Throttle (optional) ----
+const NOTIFY_COOLDOWN_MS = 8000; // 8000 = 8s; auf 0 setzen, um Throttle auszuschalten
+const _lastNotify = new Map();   // key = `${fromUid}->${toUid}`
+
+function _shouldNotify(fromUid, toUid) {
+  if (!NOTIFY_COOLDOWN_MS) return true;
+  const k = `${fromUid}->${toUid}`;
+  const now = Date.now();
+  const last = _lastNotify.get(k) ?? 0;
+  if (now - last < NOTIFY_COOLDOWN_MS) return false;
+  _lastNotify.set(k, now);
+  return true;
+}
 
 // intern
 async function ensureChat(chatId, participants) {
@@ -53,10 +66,9 @@ export async function sendChatMessage({ fromUid, toUid, text }) {
     { merge: true }
   );
 
-  // ✨ Nur benachrichtigen, wenn Empfänger NICHT aktiv im selben Chat ist
+  // ✨ Immer benachrichtigen (Throttle schützt vor Spam bei schnellem Tippen)
   try {
-    const active = await isRecipientActiveInChat(toUid, chatId);
-    if (!active) {
+    if (_shouldNotify(fromUid, toUid)) {
       await db.collection("notifications").add({
         type: "chat_message",
         recipientId: toUid,
@@ -70,6 +82,7 @@ export async function sendChatMessage({ fromUid, toUid, text }) {
 }
 
 export async function markChatRead(chatId, myUid) {
+  // idempotent per merge:true – setzt/aktualisiert nur deinen eigenen reads-Timestamp
   await db.collection("chats").doc(chatId)
-    .set({ [`reads.${myUid}`]: TS() }, { merge: true });
+    .set({ [`reads.${myUid}`]: TS(), updatedAt: TS() }, { merge: true });
 }

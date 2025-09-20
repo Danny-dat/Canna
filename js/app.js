@@ -37,7 +37,7 @@ import {
 } from "./utils/notify.util.js";
 import { formatTimestamp } from "./utils/format.util.js";
 import { db } from "./services/firebase-config.js";
-import { chatIdFor, ensureChatExists, listenChatMessages, sendChatMessage, markChatRead } from "./services/chat.service.js";
+import { chatIdFor, ensureChatExists, listenChatMessages, sendChatMessage, } from "./services/chat.service.js";
 import {
   setActiveChat,
   startPresenceHeartbeat,
@@ -652,30 +652,36 @@ const app = Vue.createApp({
       navigator.clipboard?.writeText(this.user.uid);
       alert("Freundschaftscode kopiert!");
     },
-openChat(friend) {
+async openChat(friend) {
   if (!friend?.id) return;
 
   // alten Listener abbauen
   this.activeChat.unsubscribe?.();
 
   const cid = chatIdFor(this.user.uid, friend.id);
+
+  // 1) Chat-Dokument sicher anlegen (wichtig für Rules bei update)
+  await ensureChatExists(this.user.uid, friend.id);
+
+  // 2) lokalen State setzen
   this.activeChat.chatId = cid;
   this.activeChat.partner = friend;
   this.activeChat.messages = [];
 
-  // Live-Nachrichten hören
+  // 3) Presence setzen + Heartbeat starten
+  setActiveChat(this.user.uid, cid).catch(() => {});
+  startPresenceHeartbeat(this.user.uid);
+
+  // 4) Live-Nachrichten hören
   this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
     this.activeChat.messages = msgs;
 
-    // ⬇️ Auto-Scroll + Input fokussieren
+    // Auto-Scroll + Input fokussieren
     this.$nextTick(() => {
       const box = document.querySelector("#chatMessages");
       if (box) box.scrollTop = box.scrollHeight;
-      this.$refs.chatInput?.focus();        // <— die Änderung
+      this.$refs.chatInput?.focus();
     });
-
-    // als gelesen markieren
-    markChatRead(cid, this.user.uid).catch(() => {});
   });
 },
     async sendMessage() {
@@ -689,10 +695,12 @@ openChat(friend) {
       this.chatMessageInput = "";
     },
 
-closeChat() {
-  this.activeChat.unsubscribe?.();
-  this.activeChat = { chatId: null, partner: null, messages: [], unsubscribe: null };
-},
+ closeChat() {
+   this.activeChat.unsubscribe?.();
+   this.activeChat = { chatId: null, partner: null, messages: [], unsubscribe: null };
+   setActiveChat(this.user.uid, null);
+   stopPresenceHeartbeat();
+ },
 
     // ---------- THC Rechner ----------
     calculateThcAbbau() {
