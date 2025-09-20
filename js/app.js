@@ -9,8 +9,9 @@ import {
   sendFriendRequest,
   fetchFriendRequests,
   listenForFriends,
-  acceptRequest,
-  declineRequest,
+  acceptRequest as acceptFriendRequest,
+  declineRequest as declineFriendRequest,
+  listenForIncomingRequests,
 } from "./services/friends.service.js";
 import { listenForEvents, voteEvent } from "./services/events.service.js";
 import {
@@ -113,7 +114,7 @@ const app = Vue.createApp({
       userMarkers: [],
       friendMarkers: [],
       eventMarkers: [],
-      mapUnsub: [],
+      mapUnsubs: [],
       firestoreListeners: [],
     };
   },
@@ -138,347 +139,526 @@ const app = Vue.createApp({
     this.startBannerRotation();
   },
 
-methods: {
-  // ---------- Helpers ----------
-  async _waitForSizedElement(selector, { tries = 40, delay = 50 } = {}) {
-    for (let i = 0; i < tries; i++) {
-      const el = document.querySelector(selector);
-      if (el && el.offsetWidth > 0 && el.offsetHeight > 0) return el;
-      await new Promise(r => setTimeout(r, delay));
-    }
-    throw new Error(`Element ${selector} nicht sichtbar/sized`);
-  },
+  methods: {
+    // ---------- Helpers ----------
+    async _waitForSizedElement(selector, { tries = 40, delay = 50 } = {}) {
+      for (let i = 0; i < tries; i++) {
+        const el = document.querySelector(selector);
+        if (el && el.offsetWidth > 0 && el.offsetHeight > 0) return el;
+        await new Promise((r) => setTimeout(r, delay));
+      }
+      throw new Error(`Element ${selector} nicht sichtbar/sized`);
+    },
+    _round(n, decimals = 3) {
+      const f = Math.pow(10, decimals);
+      return Math.round(n * f) / f;
+    },
 
-  // Map vollständig abbauen (Listener + Marker + Map)
-  teardownMap() {
-    try { this.mapUnsubs?.forEach(u => { try { u && u(); } catch {} }); } catch {}
-    this.mapUnsubs = [];
+    // Map vollständig abbauen (Listener + Marker + Map)
+    teardownMap() {
+      try {
+        this.mapUnsubs?.forEach((u) => {
+          try {
+            u && u();
+          } catch {}
+        });
+      } catch {}
+      this.mapUnsubs = [];
 
-    try { this.userMarkers.forEach(m => m.remove()); } catch {}
-    try { this.friendMarkers.forEach(m => m.remove()); } catch {}
-    try { this.eventMarkers.forEach(m => m.remove()); } catch {}
-    this.userMarkers = [];
-    this.friendMarkers = [];
-    this.eventMarkers = [];
+      try {
+        this.userMarkers.forEach((m) => m.remove());
+      } catch {}
+      try {
+        this.friendMarkers.forEach((m) => m.remove());
+      } catch {}
+      try {
+        this.eventMarkers.forEach((m) => m.remove());
+      } catch {}
+      this.userMarkers = [];
+      this.friendMarkers = [];
+      this.eventMarkers = [];
 
-    if (this.map?.remove) this.map.remove();
-    this.map = null;
-  },
+      if (this.map?.remove) this.map.remove();
+      this.map = null;
+    },
 
-  async _mountMapIfNeeded() {
-    if (this.currentView !== "dashboard") return;
+    async _mountMapIfNeeded() {
+      if (this.currentView !== "dashboard") return;
 
-    const el = document.getElementById("map");
-    if (!this.map || !el || this.map._container !== el) {
-      this.teardownMap();
-      try { await this._waitForSizedElement("#map"); }
-      catch (e) { console.warn("Map init TIMEOUT:", e); return; }
+      const el = document.getElementById("map");
+      if (!this.map || !el || this.map._container !== el) {
+        this.teardownMap();
+        try {
+          await this._waitForSizedElement("#map");
+        } catch (e) {
+          console.warn("Map init TIMEOUT:", e);
+          return;
+        }
 
-      this.map = initMap("map");
+        this.map = initMap("map");
 
-      // Eigene Konsum-Pins
-      const unsubConsumptions = listenForConsumptionMarkers(
-        this.map, this.user.uid,
-        (markers) => {
-          if (!this.map) return;                    // Guard
-          this.userMarkers.forEach(m => m.remove());
-          this.userMarkers = markers;
+        // Eigene Konsum-Pins
+        const unsubConsumptions = listenForConsumptionMarkers(
+          this.map,
+          this.user.uid,
+          (markers) => {
+            if (!this.map) return; // Guard
+            this.userMarkers.forEach((m) => m.remove());
+            this.userMarkers = markers;
+          }
+        );
+        this.mapUnsubs.push(unsubConsumptions);
+
+        // Event-Marker initial
+        this.eventMarkers = updateEventMarkers(
+          this.map,
+          this.user.uid,
+          this.events,
+          this.eventMarkers
+        );
+
+        // Layout/Resize
+        requestAnimationFrame(() => this.map && this.map.invalidateSize());
+        const onResize = () => this.map && this.map.invalidateSize();
+        window.addEventListener("resize", onResize);
+        this.mapUnsubs.push(() =>
+          window.removeEventListener("resize", onResize)
+        );
+      } else {
+        this.map.invalidateSize();
+      }
+    },
+
+    // ---------- Navigation ----------
+    toggleMenu() {
+      this.showMenu = !this.showMenu;
+      this.$nextTick(() => this.map && this.map.invalidateSize());
+    },
+
+    setView(view) {
+      // Dashboard verlassen → Map sauber entsorgen
+      if (this.currentView === "dashboard" && view !== "dashboard")
+        this.teardownMap();
+
+      this.currentView = view;
+      this.showMenu = false;
+
+      if (view === "dashboard") {
+        this.$nextTick(() => this._mountMapIfNeeded());
+        this.refreshStats();
+      } else if (view === "statistics") {
+        this.refreshStats();
+      }
+    },
+
+    toggleNotifications() {
+      this.showNotifications = !this.showNotifications;
+    },
+
+    // ---------- Init ----------
+    async initAppFeatures() {
+      // Live: Benachrichtigungen
+      this.listenForNotifications();
+
+      // Live: eingehende Friend Requests (pending)
+      const unsubIncoming = listenForIncomingRequests(this.user.uid, (reqs) => {
+        this.friendRequests = reqs;
+      });
+      this.firestoreListeners.push(unsubIncoming);
+
+      // Live: Freunde (aus accepted-Requests -> Profile aus profiles_public)
+      this.unsubscribeFriends = listenForFriends(
+        this.user.uid,
+        async (friends) => {
+          this.friends = friends;
+
+          // Map-Freundesmarker neu aufbauen (buildFriendMarkers sollte profiles_public.lastLocation lesen!)
+          if (!this.map) return;
+          this.friendMarkers.forEach((m) => m.remove());
+          this.friendMarkers = await buildFriendMarkers(this.map, friends);
+          this.toggleFriendMarkers();
         }
       );
-      this.mapUnsubs.push(unsubConsumptions);
 
-      // Event-Marker initial
-      this.eventMarkers = updateEventMarkers(this.map, this.user.uid, this.events, this.eventMarkers);
+      // Live: Events
+      this.unsubscribeEvents = listenForEvents((events) => {
+        this.events = events;
+        if (this.map) {
+          this.eventMarkers = updateEventMarkers(
+            this.map,
+            this.user.uid,
+            this.events,
+            this.eventMarkers
+          );
+        }
+      });
 
-      // Layout/Resize
-      requestAnimationFrame(() => this.map && this.map.invalidateSize());
-      const onResize = () => this.map && this.map.invalidateSize();
-      window.addEventListener("resize", onResize);
-      this.mapUnsubs.push(() => window.removeEventListener("resize", onResize));
-    } else {
-      this.map.invalidateSize();
-    }
-  },
+      // Settings + Userdaten
+      this.settings = await loadUserSettings(this.user.uid);
+      const data = await loadUserData(this.user.uid);
+      this.userData.displayName = data.displayName;
+      this.userData.phoneNumber = data.phoneNumber;
+      this.userData.theme = data.theme;
+      applyTheme(data.theme);
 
-  // ---------- Navigation ----------
-  toggleMenu() {
-    this.showMenu = !this.showMenu;
-    this.$nextTick(() => this.map && this.map.invalidateSize());
-  },
-
-  setView(view) {
-    // Dashboard verlassen → Map sauber entsorgen
-    if (this.currentView === "dashboard" && view !== "dashboard") this.teardownMap();
-
-    this.currentView = view;
-    this.showMenu = false;
-
-    if (view === "dashboard") {
+      this.refreshStats();
       this.$nextTick(() => this._mountMapIfNeeded());
-      this.refreshStats();
-    } else if (view === "statistics") {
-      this.refreshStats();
-    }
-  },
+    },
 
-  toggleNotifications() {
-    this.showNotifications = !this.showNotifications;
-  },
-
-  // ---------- Init ----------
-  async initAppFeatures() {
-    this.listenForNotifications();
-
-    this.unsubscribeEvents = listenForEvents((events) => {
-      this.events = events;
-      if (this.map) { // Guard: nur zeichnen, wenn Map existiert
-        this.eventMarkers = updateEventMarkers(
-          this.map, this.user.uid, this.events, this.eventMarkers
-        );
-      }
-    });
-
-    this.unsubscribeFriends = listenForFriends(this.user.uid, async (friends) => {
-      this.friends = friends;
-      if (!this.map) return; // Guard
-      this.friendMarkers.forEach(m => m.remove());
-      this.friendMarkers = await buildFriendMarkers(this.map, friends);
-      this.toggleFriendMarkers();
-    });
-
-    this.settings = await loadUserSettings(this.user.uid);
-    const data = await loadUserData(this.user.uid);
-    this.userData.displayName = data.displayName;
-    this.userData.phoneNumber = data.phoneNumber;
-    this.userData.theme = data.theme;
-    applyTheme(data.theme);
-
-    this.refreshStats();
-    this.$nextTick(() => this._mountMapIfNeeded());
-  },
-
-  cleanupListeners() {
-    // ALLES aufräumen
-    this.teardownMap();
-    try { this.firestoreListeners.forEach(u => u && u()); } catch {}
-    this.firestoreListeners = [];
-    this.unsubscribeEvents?.();
-    this.unsubscribeFriends?.();
-    this.activeChat.unsubscribe?.();
-    if (this.bannerInterval) clearInterval(this.bannerInterval);
-  },
-
-  // ---------- Auth ----------
-  async doRegister() {
-    const phoneRegex = /^(015|016|017)\d{8,9}$/;
-    const pn = this.form.phoneNumber.replace(/[\s\/-]/g, "");
-    if (!this.form.displayName.trim()) return alert("Bitte gib einen Anzeigenamen ein.");
-    if (!phoneRegex.test(pn)) return alert("Bitte gib eine gültige deutsche Handynummer ein.");
-    await register({ email: this.form.email, password: this.form.password, displayName: this.form.displayName, phoneNumber: pn });
-  },
-  doLogin() { return login(this.form.email, this.form.password).catch(e => alert(e.message)); },
-  doLogout() { logout(); this.showMenu = false; },
-
-  // ---------- User Data ----------
-  async saveUserData() {
-    await saveUserData(this.user.uid, {
-      displayName: this.userData.displayName,
-      phoneNumber: this.userData.phoneNumber,
-      theme: this.userData.theme,
-    });
-    alert("Daten gespeichert!");
-    applyTheme(this.userData.theme);
-    this.setView("dashboard");
-  },
-  async saveUserSettings() {
-    await saveUserSettings(this.user.uid, this.settings);
-    this.showSettings = false;
-  },
-
-  // ---------- Konsum + Notify ----------
-  async logConsumption() {
-    try {
-      if (this._isLogging) return;
-      this._isLogging = true;
-
-      if (!this.selection.product || !this.selection.device) {
-        this.alertMessage = "Bitte wähle ein Produkt und ein Gerät aus.";
-        this.showAlert = true; return;
-      }
-      if (!this.user?.uid) {
-        this.alertMessage = "Nicht eingeloggt – bitte erneut anmelden.";
-        this.showAlert = true; return;
-      }
-
-      // Tageslimit (Composite-Index: userId ASC, timestamp ASC)
-      const today = new Date();
-      const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
-
-      let q;
+    cleanupListeners() {
+      // ALLES aufräumen
+      this.teardownMap();
       try {
-        q = await db.collection("consumptions")
-          .where("userId", "==", this.user.uid)
-          .where("timestamp", ">=", start)
-          .orderBy("timestamp", "asc")
-          .limit(this.settings.consumptionThreshold)
-          .get();
-      } catch (e) {
-        console.error("Firestore-Query-Fehler:", e);
-        this.alertMessage = (e.code === "failed-precondition")
-          ? "Der benötigte Firestore-Index wird (noch) erstellt. Bitte gleich nochmal versuchen."
-          : "Fehler beim Laden der Daten.";
-        this.showAlert = true; return;
-      }
+        this.firestoreListeners.forEach((u) => u && u());
+      } catch {}
+      this.firestoreListeners = [];
+      this.unsubscribeEvents?.();
+      this.unsubscribeFriends?.();
+      this.activeChat.unsubscribe?.();
+      if (this.bannerInterval) clearInterval(this.bannerInterval);
+    },
 
-      if (q.docs.length >= this.settings.consumptionThreshold) {
-        this.alertMessage = `Du hast dein Tageslimit von ${this.settings.consumptionThreshold} Einheiten erreicht!`;
-        this.showAlert = true;
-        playSoundAndVibrate();
-        return;
-      }
+    // ---------- Auth ----------
+    async doRegister() {
+      const phoneRegex = /^(015|016|017)\d{8,9}$/;
+      const pn = this.form.phoneNumber.replace(/[\s\/-]/g, "");
+      if (!this.form.displayName.trim())
+        return alert("Bitte gib einen Anzeigenamen ein.");
+      if (!phoneRegex.test(pn))
+        return alert("Bitte gib eine gültige deutsche Handynummer ein.");
+      await register({
+        email: this.form.email,
+        password: this.form.password,
+        displayName: this.form.displayName,
+        phoneNumber: pn,
+      });
+    },
+    doLogin() {
+      return login(this.form.email, this.form.password).catch((e) =>
+        alert(e.message)
+      );
+    },
+    doLogout() {
+      logout();
+      this.showMenu = false;
+    },
 
-      // Geolocation (soft-fail)
-      const pos = await new Promise(resolve => {
-        if (!("geolocation" in navigator)) return resolve(null);
-        navigator.geolocation.getCurrentPosition(
-          p => resolve(p),
-          () => resolve(null),
-          { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-        );
+    // ---------- User Data ----------
+    async saveUserData() {
+      await saveUserData(this.user.uid, {
+        displayName: this.userData.displayName,
+        phoneNumber: this.userData.phoneNumber,
+        theme: this.userData.theme,
       });
 
-      // Speichern
+      // öffentliches Profil (lesbar für Freunde)
+      await db
+        .collection("profiles_public")
+        .doc(this.user.uid)
+        .set(
+          {
+            displayName: this.userData.displayName || this.user.email,
+            photoURL: null,
+            updatedAt: new Date(),
+          },
+          { merge: true }
+        );
+
+      alert("Daten gespeichert!");
+      applyTheme(this.userData.theme);
+      this.setView("dashboard");
+    },
+    async saveUserSettings() {
+      await saveUserSettings(this.user.uid, this.settings);
+      this.showSettings = false;
+    },
+
+    // ---------- Konsum + Notify ----------
+    async logConsumption() {
       try {
-        await db.collection("consumptions").add({
-          userId: this.user.uid,
-          product: this.selection.product,
-          device: this.selection.device,
-          location: pos ? { lat: pos.coords.latitude, lng: pos.coords.longitude } : null,
-          timestamp: new Date(),
+        if (this._isLogging) return;
+        this._isLogging = true;
+
+        if (!this.selection.product || !this.selection.device) {
+          this.alertMessage = "Bitte wähle ein Produkt und ein Gerät aus.";
+          this.showAlert = true;
+          return;
+        }
+        if (!this.user?.uid) {
+          this.alertMessage = "Nicht eingeloggt – bitte erneut anmelden.";
+          this.showAlert = true;
+          return;
+        }
+
+        // Tageslimit (Composite-Index: userId ASC, timestamp ASC)
+        const today = new Date();
+        const start = new Date(
+          today.getFullYear(),
+          today.getMonth(),
+          today.getDate()
+        );
+
+        let q;
+        try {
+          q = await db
+            .collection("consumptions")
+            .where("userId", "==", this.user.uid)
+            .where("timestamp", ">=", start)
+            .orderBy("timestamp", "asc")
+            .limit(this.settings.consumptionThreshold)
+            .get();
+        } catch (e) {
+          console.error("Firestore-Query-Fehler:", e);
+          this.alertMessage =
+            e.code === "failed-precondition"
+              ? "Der benötigte Firestore-Index wird (noch) erstellt. Bitte gleich nochmal versuchen."
+              : "Fehler beim Laden der Daten.";
+          this.showAlert = true;
+          return;
+        }
+
+        if (q.docs.length >= this.settings.consumptionThreshold) {
+          this.alertMessage = `Du hast dein Tageslimit von ${this.settings.consumptionThreshold} Einheiten erreicht!`;
+          this.showAlert = true;
+          playSoundAndVibrate();
+          return;
+        }
+
+        // Geolocation (soft-fail)
+        const pos = await new Promise((resolve) => {
+          if (!("geolocation" in navigator)) return resolve(null);
+          navigator.geolocation.getCurrentPosition(
+            (p) => resolve(p),
+            () => resolve(null),
+            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
+          );
         });
-      } catch (e) {
-        console.error("Firestore-Write-Fehler:", e);
-        this.alertMessage = "Speichern fehlgeschlagen. Details in der Konsole.";
-        this.showAlert = true; return;
+
+        // Speichern (consumption)
+        try {
+          await db.collection("consumptions").add({
+            userId: this.user.uid,
+            product: this.selection.product,
+            device: this.selection.device,
+            location:
+              pos && pos.coords
+                ? { lat: pos.coords.latitude, lng: pos.coords.longitude }
+                : null,
+            timestamp: new Date(),
+          });
+        } catch (e) {
+          console.error("Firestore-Write-Fehler:", e);
+          this.alertMessage =
+            "Speichern fehlgeschlagen. Details in der Konsole.";
+          this.showAlert = true;
+          return;
+        }
+
+        // Öffentlich: letzte (grobe) Position für Freunde aktualisieren
+        try {
+          if (pos && pos.coords) {
+            await db
+              .collection("profiles_public")
+              .doc(this.user.uid)
+              .set(
+                {
+                  lastLocation: {
+                    lat: this._round(pos.coords.latitude, 3), // ~110 m
+                    lng: this._round(pos.coords.longitude, 3),
+                  },
+                  lastActiveAt: new Date(),
+                },
+                { merge: true }
+              );
+          } else {
+            await db.collection("profiles_public").doc(this.user.uid).set(
+              {
+                lastActiveAt: new Date(),
+              },
+              { merge: true }
+            );
+          }
+        } catch (e) {
+          console.warn(
+            "profiles_public lastLocation Update fehlgeschlagen:",
+            e
+          );
+        }
+
+        // UI reset + Benachrichtigen + Stats
+        this.selection = { product: null, device: null };
+
+        try {
+          await notifyFriendsIfReachedLimit(
+            this.user.uid,
+            this.userData.displayName || this.user.email,
+            this.settings.consumptionThreshold
+          );
+        } catch (e) {
+          console.warn("notifyFriendsIfReachedLimit Fehler:", e);
+        }
+
+        await this.refreshStats();
+        this.alertMessage = "Eintrag gespeichert.";
+        this.showAlert = true;
+      } finally {
+        this._isLogging = false;
       }
+    },
 
-      // UI reset + Benachrichtigen + Stats
-      this.selection = { product: null, device: null };
+    // ---------- Statistik ----------
+    async refreshStats() {
+      if (!this.user.uid) return;
+      const stats = await loadConsumptionStats(this.user.uid);
+      this.consumptionChart = renderChart(
+        "consumptionChart",
+        stats,
+        this.consumptionChart
+      );
+    },
 
+    // ---------- Map ----------
+    toggleFriendMarkers() {
+      if (!this.map) return; // Guard
+      setMarkerVisibility(this.map, this.friendMarkers, this.showFriendsOnMap);
+    },
+
+    // ---------- Events ----------
+    voteEvent(id, dir) {
+      return voteEvent(id, this.user.uid, dir);
+    },
+    voteEventUp(id) {
+      return this.voteEvent(id, "up");
+    },
+    voteEventDown(id) {
+      return this.voteEvent(id, "down");
+    },
+
+    // ---------- Freunde ----------
+    async actionSendFriendRequest() {
+      const id = this.friendIdInput.trim();
+      if (!id || id === this.user.uid) return alert("Ungültige User-ID.");
       try {
-        await notifyFriendsIfReachedLimit(
-          this.user.uid,
-          this.userData.displayName || this.user.email,
-          this.settings.consumptionThreshold
-        );
-      } catch (e) { console.warn("notifyFriendsIfReachedLimit Fehler:", e); }
+        await sendFriendRequest({
+          fromUid: this.user.uid,
+          fromEmail: this.user.email,
+          fromDisplayName: this.userData.displayName || this.user.email,
+          toUid: id,
+        });
+        alert("Freundschaftsanfrage gesendet!");
+        this.friendIdInput = "";
+      } catch (e) {
+        alert(e.message || "Konnte Anfrage nicht senden.");
+      }
+    },
 
-      await this.refreshStats();
-      this.alertMessage = "Eintrag gespeichert.";
-      this.showAlert = true;
-    } finally {
-      this._isLogging = false;
-    }
-  },
+    async actionFetchFriendRequests() {
+      this.friendRequests = await fetchFriendRequests(this.user.uid);
+      if (!this.friendRequests.length)
+        alert("Keine neuen Freundschaftsanfragen.");
+    },
 
-  // ---------- Statistik ----------
-  async refreshStats() {
-    if (!this.user.uid) return;
-    const stats = await loadConsumptionStats(this.user.uid);
-    this.consumptionChart = renderChart("consumptionChart", stats, this.consumptionChart);
-  },
+    // neue, eindeutig benannte Wrapper:
+    acceptRequest(req) {
+      return acceptFriendRequest(this.user.uid, req);
+    },
+    declineRequest(req) {
+      return declineFriendRequest(this.user.uid, req);
+    },
 
-  // ---------- Map ----------
-  toggleFriendMarkers() {
-    if (!this.map) return; // Guard
-    setMarkerVisibility(this.map, this.friendMarkers, this.showFriendsOnMap);
-  },
-
-  // ---------- Events ----------
-  voteEvent(id, dir) { return voteEvent(id, this.user.uid, dir); },
-  voteEventUp(id) { return this.voteEvent(id, "up"); },
-  voteEventDown(id) { return this.voteEvent(id, "down"); },
-
-  // ---------- Freunde ----------
-  async actionSendFriendRequest() {
-    const id = this.friendIdInput.trim();
-    if (!id || id === this.user.uid) return alert("Ungültige User-ID.");
-    await sendFriendRequest({
-      fromUid: this.user.uid,
-      fromEmail: this.user.email,
-      fromDisplayName: this.userData.displayName || this.user.email,
-      toUid: id,
-    });
-    alert("Freundschaftsanfrage gesendet!");
-    this.friendIdInput = "";
-  },
-  async actionFetchFriendRequests() {
-    this.friendRequests = await fetchFriendRequests(this.user.uid);
-    if (!this.friendRequests.length) alert("Keine neuen Freundschaftsanfragen gefunden.");
-  },
-  acceptRequest(req) { return acceptRequest(this.user.uid, req); },
-  declineRequest(id) { return declineRequest(id); },
-
-  // ---------- Chat ----------
-  shareProfile() {
-    const text = `Mein Freundschaftscode: ${this.user.uid}`;
-    if (navigator.share) return navigator.share({ text }).catch(() => {});
-    navigator.clipboard?.writeText(this.user.uid);
-    alert("Freundschaftscode kopiert!");
-  },
-  openChat(friend) {
-    this.activeChat.partner = friend;
-    this.activeChat.chatId = friend.id || friend.uid || `chat-${Date.now()}`;
-    this.activeChat.messages = [];
-  },
-  closeChat() {
-    this.activeChat.unsubscribe?.();
-    this.activeChat = { chatId: null, partner: null, messages: [], unsubscribe: null };
-  },
-  sendMessage() {
-    const txt = this.chatMessageInput?.trim();
-    if (!txt) return;
-    this.activeChat.messages.push({ id: Date.now(), senderId: this.user.uid, text: txt });
-    this.chatMessageInput = "";
-  },
-
-  // ---------- THC Rechner ----------
-  calculateThcAbbau() {
-    const r = calculateThc(this.thcCalc);
-    if (r.error) return alert(r.error);
-    this.thcCalc.result = r;
-  },
-
-  // ---------- Notifications ----------
-  listenForNotifications() {
-    const unsub = db.collection("notifications")
-      .where("recipientId", "==", this.user.uid)
-      .onSnapshot((snap) => {
-        const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        all.sort((a, b) =>
-          (b.timestamp?.toDate?.() ?? b.timestamp) - (a.timestamp?.toDate?.() ?? a.timestamp)
-        );
-        this.notifications = all.slice(0, 10);
+    // ---------- Chat ----------
+    shareProfile() {
+      const text = `Mein Freundschaftscode: ${this.user.uid}`;
+      if (navigator.share) return navigator.share({ text }).catch(() => {});
+      navigator.clipboard?.writeText(this.user.uid);
+      alert("Freundschaftscode kopiert!");
+    },
+    openChat(friend) {
+      this.activeChat.partner = friend;
+      this.activeChat.chatId = friend.id || friend.uid || `chat-${Date.now()}`;
+      this.activeChat.messages = [];
+    },
+    closeChat() {
+      this.activeChat.unsubscribe?.();
+      this.activeChat = {
+        chatId: null,
+        partner: null,
+        messages: [],
+        unsubscribe: null,
+      };
+    },
+    sendMessage() {
+      const txt = this.chatMessageInput?.trim();
+      if (!txt) return;
+      this.activeChat.messages.push({
+        id: Date.now(),
+        senderId: this.user.uid,
+        text: txt,
       });
-    this.firestoreListeners.push(unsub);
-  },
-  async markNotificationAsRead(n) {
-    if (!n.read) await db.collection("notifications").doc(n.id).update({ read: true });
-  },
-  formatTimestamp,
+      this.chatMessageInput = "";
+    },
 
-  // ---------- UI ----------
-  toggleSettings() {
-    this.showSettings = !this.showSettings;
-    this.$nextTick(() => this.map && this.map.invalidateSize());
+    // ---------- THC Rechner ----------
+    calculateThcAbbau() {
+      const r = calculateThc(this.thcCalc);
+      if (r.error) return alert(r.error);
+      this.thcCalc.result = r;
+    },
+
+    // ---------- Notifications ----------
+    listenForNotifications() {
+      const unsub = db
+        .collection("notifications")
+        .where("recipientId", "==", this.user.uid)
+        // .orderBy("timestamp", "desc") // optional, falls Index vorhanden
+        .onSnapshot((snap) => {
+          let addedUnread = false;
+
+          snap.docChanges().forEach((ch) => {
+            if (ch.type === "added") {
+              const d = ch.doc.data();
+              if (!d.read) addedUnread = true;
+            }
+          });
+
+          const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
+          all.sort(
+            (a, b) =>
+              (b.timestamp?.toDate?.() ?? b.timestamp) -
+              (a.timestamp?.toDate?.() ?? a.timestamp)
+          );
+          this.notifications = all.slice(0, 10);
+
+          if (addedUnread) {
+            try {
+              playSoundAndVibrate();
+            } catch {}
+          }
+        });
+      this.firestoreListeners.push(unsub);
+    },
+    async markNotificationAsRead(n) {
+      if (!n.read)
+        await db.collection("notifications").doc(n.id).update({ read: true });
+    },
+    formatTimestamp,
+
+    // ---------- UI ----------
+    toggleSettings() {
+      this.showSettings = !this.showSettings;
+      this.$nextTick(() => this.map && this.map.invalidateSize());
+    },
+    closeAlert() {
+      this.showAlert = false;
+    },
+    startBannerRotation() {
+      this.bannerInterval = setInterval(() => {
+        this.landingBannerIndex =
+          (this.landingBannerIndex + 1) % this.landingBanners.length;
+        this.dashboardBannerIndex =
+          (this.dashboardBannerIndex + 1) % this.dashboardBanners.length;
+      }, 5000);
+    },
   },
-  closeAlert() { this.showAlert = false; },
-  startBannerRotation() {
-    this.bannerInterval = setInterval(() => {
-      this.landingBannerIndex = (this.landingBannerIndex + 1) % this.landingBanners.length;
-      this.dashboardBannerIndex = (this.dashboardBannerIndex + 1) % this.dashboardBanners.length;
-    }, 5000);
-  },
-},
 });
 app.mount("#app");

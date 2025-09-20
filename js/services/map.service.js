@@ -3,34 +3,26 @@ import { db } from "./firebase-config.js";
 
 /* -------------------------- Helpers -------------------------- */
 
-// akzeptiert {lat,lng}, {latitude,longitude}, [lat,lng] oder ein Event-Objekt mit e.lat/e.lng
-function toLatLng(locOrEvent) {
-  if (!locOrEvent) return null;
+// akzeptiert {lat,lng}, {latitude,longitude}, [lat,lng]
+function toLatLng(loc) {
+  if (!loc) return null;
 
   // Array [lat, lng]
-  if (Array.isArray(locOrEvent) && locOrEvent.length === 2) {
-    const [lat, lng] = locOrEvent;
-    return (isFinite(lat) && isFinite(lng)) ? [lat, lng] : null;
+  if (Array.isArray(loc) && loc.length === 2) {
+    const [lat, lng] = loc;
+    return (Number.isFinite(lat) && Number.isFinite(lng)) ? [lat, lng] : null;
   }
 
-  // eigenes Objekt {lat, lng}
-  if (typeof locOrEvent.lat === "number" && typeof locOrEvent.lng === "number") {
-    return [locOrEvent.lat, locOrEvent.lng];
+  // Objekt {lat, lng}
+  if (typeof loc === "object") {
+    if (Number.isFinite(loc.lat) && Number.isFinite(loc.lng)) {
+      return [loc.lat, loc.lng];
+    }
+    // Firestore GeoPoint (oder plain object mit latitude/longitude)
+    if (Number.isFinite(loc.latitude) && Number.isFinite(loc.longitude)) {
+      return [loc.latitude, loc.longitude];
+    }
   }
-
-  // Firestore GeoPoint {latitude, longitude}
-  if (
-    typeof locOrEvent.latitude === "number" &&
-    typeof locOrEvent.longitude === "number"
-  ) {
-    return [locOrEvent.latitude, locOrEvent.longitude];
-  }
-
-  // Event-Fallback (alte Struktur)
-  if (typeof locOrEvent.lat === "number" && typeof locOrEvent.lng === "number") {
-    return [locOrEvent.lat, locOrEvent.lng];
-  }
-
   return null;
 }
 
@@ -62,10 +54,8 @@ export function initMap(containerId, center = [51.61, 7.33], zoom = 13) {
     attribution: "© OpenStreetMap",
   });
 
-  tiles.on("load", () => {
-    // nach dem ersten Frame Größe neu berechnen (fix für versteckte Tabs/Container)
-    requestAnimationFrame(() => map.invalidateSize());
-  });
+  // nach dem ersten Frame Größe neu berechnen (fix für versteckte Tabs/Container)
+  tiles.on("load", () => requestAnimationFrame(() => map.invalidateSize()));
 
   tiles.addTo(map);
   return map;
@@ -84,9 +74,8 @@ export function createMarkerIcon(color, iconClass = "") {
 }
 
 /**
- * Lauscht auf eigene Konsum-Logs und setzt Marker.
- * Contract wie vorher: ruft setMarkers(markers) mit den NEUEN Markern auf.
- * (Der Caller entfernt vorherige Marker selbst.)
+ * Eigene Konsum-Logs live hören und Marker setzen.
+ * -> nutzt ASC + limit (nutzt deinen bestehenden Index userId ASC, timestamp ASC)
  */
 export function listenForConsumptionMarkers(map, uid, setMarkers) {
   if (!map || !uid) return () => {};
@@ -100,7 +89,7 @@ export function listenForConsumptionMarkers(map, uid, setMarkers) {
       snap.forEach((doc) => {
         const d = doc.data();
         const latLng = toLatLng(d.location);
-        if (!latLng) return; // <— kein Standort gespeichert: Marker überspringen
+        if (!latLng) return; // kein Standort gespeichert → überspringen
         const m = addSafeMarker(map, latLng, { icon: createMarkerIcon("green") });
         if (m) markers.push(m);
       });
@@ -109,29 +98,44 @@ export function listenForConsumptionMarkers(map, uid, setMarkers) {
 }
 
 /**
- * Holt pro Freund den letzten Konsum und gibt Marker (NOCH NICHT hinzugefügt) zurück.
- * Der Caller entscheidet später via setMarkerVisibility(), ob die Marker angezeigt werden.
+ * Freunde-Marker bauen:
+ * 1) bevorzugt aus profiles_public/{friendId}.lastLocation (kein Index, schnelle Reads)
+ * 2) Fallback: letzter Konsum per ASC + limitToLast(1) (nutzt bestehenden ASC-Index)
+ * Marker werden NICHT direkt zur Map hinzugefügt – Sichtbarkeit steuert setMarkerVisibility().
  */
 export async function buildFriendMarkers(map, friends = []) {
   const markers = [];
   for (const friend of friends) {
     try {
-      const q = await db
-        .collection("consumptions")
-        .where("userId", "==", friend.id)
-        .orderBy("timestamp", "asc")
-        .limit(1)
-        .get();
+      if (!friend?.id) continue;
 
-      if (q.empty) continue;
+      // 1) öffentliche Profil-Position
+      const prof = await db.collection("profiles_public").doc(friend.id).get();
+      let latLng = null;
+      if (prof.exists) {
+        latLng = toLatLng((prof.data() || {}).lastLocation);
+      }
 
-      const last = q.docs[0].data();
-      const latLng = toLatLng(last.location);
+      // 2) Fallback: letzter Konsum
+      if (!latLng) {
+        const q = await db
+          .collection("consumptions")
+          .where("userId", "==", friend.id)
+          .orderBy("timestamp", "asc")   // ASC + limitToLast vermeidet extra DESC-Index
+          .limitToLast(1)
+          .get();
+
+        if (!q.empty) {
+          const last = q.docs[0].data();
+          latLng = toLatLng(last.location);
+        }
+      }
+
       if (!latLng) continue;
 
       const m = L.marker(latLng, { icon: createMarkerIcon("blue") });
       m.bindPopup(friend.displayName || friend.email || "Freund");
-      // NICHT addTo(map) – Sichtbarkeit wird später entschieden
+      // NICHT addTo(map) – Sichtbarkeit via setMarkerVisibility()
       markers.push(m);
     } catch (e) {
       console.warn("[map] buildFriendMarkers Fehler:", e);
@@ -141,27 +145,28 @@ export async function buildFriendMarkers(map, friends = []) {
 }
 
 /**
- * Schaltet Marker sichtbar/unsichtbar.
+ * Marker sichtbar/unsichtbar schalten.
  */
 export function setMarkerVisibility(map, markers = [], visible) {
+  if (!markers || !markers.length) return;
   markers.forEach((m) => (visible ? m.addTo(map) : m.remove()));
 }
 
 /**
- * Setzt Event-Marker neu. Events können entweder {location:{lat,lng}} /
- * GeoPoint oder alte Felder {lat,lng} tragen.
+ * Event-Marker neu setzen.
+ * Events: ev.location {lat,lng} / GeoPoint ODER legacy ev.lat/ev.lng
+ * Beispiel: nur Events, die ich upgevotet habe.
  */
 export function updateEventMarkers(map, uid, events = [], current = []) {
-  current.forEach((m) => m.remove());
+  if (current?.length) current.forEach((m) => m.remove());
   const fresh = [];
 
   for (const ev of events) {
-    // Beispiel-Bedingung: nur Events, die ich upgevotet habe
     if (Array.isArray(ev.upvotes) && !ev.upvotes.includes(uid)) continue;
 
     const latLng =
       toLatLng(ev.location) ||
-      toLatLng({ lat: ev.lat, lng: ev.lng }); // Fallback für alte Struktur
+      toLatLng({ lat: ev?.lat, lng: ev?.lng }); // legacy fallback
 
     if (!latLng) continue;
 
@@ -173,6 +178,5 @@ export function updateEventMarkers(map, uid, events = [], current = []) {
       fresh.push(m);
     }
   }
-
   return fresh;
 }
