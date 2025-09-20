@@ -710,37 +710,85 @@ async openChat(friend) {
     },
 
     // ---------- Notifications ----------
-    listenForNotifications() {
-      const unsub = db
-        .collection("notifications")
-        .where("recipientId", "==", this.user.uid)
-        // .orderBy("timestamp", "desc") // optional, falls Index vorhanden
-        .onSnapshot((snap) => {
-          let addedUnread = false;
+listenForNotifications() {
+  const unsub = db
+    .collection("notifications")
+    .where("recipientId", "==", this.user.uid)
+    .onSnapshot((snap) => {
+      let addedUnread = false;
 
-          snap.docChanges().forEach((ch) => {
-            if (ch.type === "added") {
-              const d = ch.doc.data();
-              if (!d.read) addedUnread = true;
-            }
-          });
-
-          const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-          all.sort(
-            (a, b) =>
-              (b.timestamp?.toDate?.() ?? b.timestamp) -
-              (a.timestamp?.toDate?.() ?? a.timestamp)
-          );
-          this.notifications = all.slice(0, 10);
-
-          if (addedUnread) {
-            try {
-              playSoundAndVibrate();
-            } catch {}
+      const all = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        // ✨ Filter: wenn aktuell ein Chat offen, keine Notis für diesen Chat
+        .filter((n) => {
+          if (n.type === "chat_message" && this.activeChat?.chatId) {
+            // wenn der Sender derselbe wie der Chat-Partner ist → nicht anzeigen
+            return n.senderId !== this.activeChat.partner?.id;
           }
+          return true;
         });
-      this.firestoreListeners.push(unsub);
-    },
+
+      all.sort(
+        (a, b) =>
+          (b.timestamp?.toDate?.() ?? b.timestamp) -
+          (a.timestamp?.toDate?.() ?? a.timestamp)
+      );
+
+      this.notifications = all.slice(0, 10);
+
+      // nur Sound/Vibration, wenn wirklich neue relevante Notification dabei ist
+      snap.docChanges().forEach((ch) => {
+        if (ch.type === "added") {
+          const d = ch.doc.data();
+          if (!d.read) {
+            if (!(d.type === "chat_message" && this.activeChat?.chatId && d.senderId === this.activeChat.partner?.id)) {
+              addedUnread = true;
+            }
+          }
+        }
+      });
+
+      if (addedUnread) {
+        try {
+          playSoundAndVibrate();
+        } catch {}
+      }
+    });
+  this.firestoreListeners.push(unsub);
+},
+async handleNotificationClick(n) {
+  // 1) als gelesen markieren (leise, ohne UI-Flackern)
+  if (!n.read) {
+    try { await db.collection("notifications").doc(n.id).update({ read: true }); } catch {}
+  }
+
+  // 2) Nur Chat-Notis deeplinken
+  if (n.type !== "chat_message") return;
+
+  // Absender ist dein Chat-Partner
+  const partnerId = n.senderId;
+
+  // 3) Partner-Objekt finden/bauen
+  let friend = this.friends.find(f => f.id === partnerId);
+  if (!friend) {
+    // Minimaldaten nachladen (optional für Label/Avatar)
+    try {
+      const snap = await db.collection("profiles_public").doc(partnerId).get();
+      const d = snap.exists ? snap.data() : {};
+      friend = { id: partnerId, displayName: d?.displayName || partnerId };
+    } catch {
+      friend = { id: partnerId };
+    }
+  }
+
+  // 4) Notifications-Panel schließen (optional)
+  this.showNotifications = false;
+
+  // 5) View setzen, Chat öffnen
+  if (this.currentView !== "dashboard") this.setView("dashboard");
+  // openChat existiert bereits
+  this.openChat(friend);
+},
     async markNotificationAsRead(n) {
       if (!n.read)
         await db.collection("notifications").doc(n.id).update({ read: true });
