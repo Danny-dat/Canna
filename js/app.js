@@ -38,7 +38,13 @@ import {
 } from "./utils/notify.util.js";
 import { formatTimestamp } from "./utils/format.util.js";
 import { db } from "./services/firebase-config.js";
-
+import {
+  chatIdFor,
+  ensureChatExists,
+  listenChatMessages,
+  sendChatMessage,
+  markChatRead,
+} from "./services/chat.service.js";
 async function ensurePublicProfileOnLogin(user) {
   const ref = db.collection("profiles_public").doc(user.uid);
   const snap = await ref.get();
@@ -50,7 +56,11 @@ async function ensurePublicProfileOnLogin(user) {
 
   if (!snap.exists) {
     await ref.set(
-      { displayName: name, photoURL: user.photoURL || null, createdAt: new Date() },
+      {
+        displayName: name,
+        photoURL: user.photoURL || null,
+        createdAt: new Date(),
+      },
       { merge: true }
     );
   } else if (!snap.data().displayName && name) {
@@ -148,28 +158,32 @@ const app = Vue.createApp({
     },
   },
 
-mounted() {
-  onAuth(async (user) => {
-    if (user) {
-      this.user = { loggedIn: true, uid: user.uid, email: user.email };
+  mounted() {
+    onAuth(async (user) => {
+      if (user) {
+        this.user = { loggedIn: true, uid: user.uid, email: user.email };
 
-      try { await ensurePublicProfileOnLogin(user); } catch (e) { console.warn(e); }
-      
-      try {
-        await syncFriendshipsOnLogin(user.uid);
-      } catch (e) {
-        console.warn("syncFriendshipsOnLogin failed:", e);
+        try {
+          await ensurePublicProfileOnLogin(user);
+        } catch (e) {
+          console.warn(e);
+        }
+
+        try {
+          await syncFriendshipsOnLogin(user.uid);
+        } catch (e) {
+          console.warn("syncFriendshipsOnLogin failed:", e);
+        }
+
+        await this.initAppFeatures();
+      } else {
+        this.user = { loggedIn: false, uid: null, email: null };
+        this.cleanupListeners();
+        applyTheme("light");
       }
-
-      await this.initAppFeatures();
-    } else {
-      this.user = { loggedIn: false, uid: null, email: null };
-      this.cleanupListeners();
-      applyTheme("light");
-    }
-  });
-  this.startBannerRotation();
-},
+    });
+    this.startBannerRotation();
+  },
 
   methods: {
     // ---------- Helpers ----------
@@ -641,10 +655,40 @@ mounted() {
       alert("Freundschaftscode kopiert!");
     },
     openChat(friend) {
-      this.activeChat.partner = friend;
-      this.activeChat.chatId = friend.id || friend.uid || `chat-${Date.now()}`;
-      this.activeChat.messages = [];
+      if (!friend?.id) return;
+      this.activeChat.unsubscribe?.();
+
+      const cid = chatIdFor(this.user.uid, friend.id);
+      this.activeChat = {
+        chatId: cid,
+        partner: friend,
+        messages: [],
+        unsubscribe: null,
+      };
+
+      // Chat-Dokument sicherstellen (falls noch nie geschrieben wurde)
+      ensureChatExists(this.user.uid, friend.id).catch(() => {});
+
+      this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
+        this.activeChat.messages = msgs;
+        this.$nextTick(() => {
+          const box = document.querySelector("#chatMessages");
+          if (box) box.scrollTop = box.scrollHeight;
+        });
+        markChatRead(cid, this.user.uid).catch(() => {});
+      });
     },
+    async sendMessage() {
+      const txt = this.chatMessageInput?.trim();
+      if (!txt || !this.activeChat?.partner?.id) return;
+      await sendChatMessage({
+        fromUid: this.user.uid,
+        toUid: this.activeChat.partner.id,
+        text: txt,
+      });
+      this.chatMessageInput = "";
+    },
+
     closeChat() {
       this.activeChat.unsubscribe?.();
       this.activeChat = {
@@ -653,16 +697,6 @@ mounted() {
         messages: [],
         unsubscribe: null,
       };
-    },
-    sendMessage() {
-      const txt = this.chatMessageInput?.trim();
-      if (!txt) return;
-      this.activeChat.messages.push({
-        id: Date.now(),
-        senderId: this.user.uid,
-        text: txt,
-      });
-      this.chatMessageInput = "";
     },
 
     // ---------- THC Rechner ----------
