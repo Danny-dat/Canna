@@ -346,24 +346,40 @@
       </main>
     </div>
 
-    <!-- Chat Overlay -->
-    <div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
-      <div class="chat-window" @click.stop>
-        <div class="chat-header">
-          <h3>Chat mit {{ activeChat.partner.displayName || activeChat.partner.email }}</h3>
-          <button @click="closeChat" class="btn-close-chat">&times;</button>
-        </div>
-        <div class="chat-messages">
-          <div v-for="message in activeChat.messages" :key="message.id" class="message-bubble" :class="{ 'sent': message.senderId === user.uid, 'received': message.senderId !== user.uid }">
-            <p>{{ message.text }}</p>
-          </div>
-        </div>
-        <div class="chat-input">
-          <input type="text" v-model="chatMessageInput" @keyup.enter="sendMessage" placeholder="Nachricht...">
-          <button @click="sendMessage">→</button>
-        </div>
-      </div>
+<!-- Chat Overlay -->
+<div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
+  <div class="chat-window" @click.stop>
+    <div class="chat-header">
+      <h3>
+        Chat mit
+        {{ activeChat.partner.username
+           || activeChat.partner.displayName
+           || activeChat.partner.label
+           || activeChat.partner.email
+           || activeChat.partner.id }}
+      </h3>
+      <button @click="closeChat" class="btn-close-chat">&times;</button>
     </div>
+
+    <!-- WICHTIG: ID für Auto-Scroll -->
+<div id="chatMessages" ref="chatMessages" class="chat-messages">
+  <div
+    v-for="m in activeChat.messages"
+    :key="m.id"
+    class="message-bubble"
+    :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }"
+  >
+    <p>{{ m.text }}</p>
+  </div>
+</div>
+
+<input
+  type="text"
+  v-model="chatMessageInput"
+  @keyup.enter="sendMessage"
+  placeholder="Nachricht..."
+  ref="chatInput"
+/>
 
     <!-- Settings Overlay -->
     <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">

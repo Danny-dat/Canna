@@ -55,6 +55,7 @@ body {
     margin: 0 auto;
 }
 .map-container { min-height: 460px; }
+.chat-messages { max-height: 50vh; overflow: auto; }
 
 .card {
     background-color: var(--surface-color);

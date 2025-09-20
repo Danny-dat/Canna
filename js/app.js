@@ -14,7 +14,6 @@ import {
   listenForIncomingRequests,
   removeFriend,
   blockFriend,
-  unblockFriend,
   syncFriendshipsOnLogin,
 } from "./services/friends.service.js";
 import { listenForEvents, voteEvent } from "./services/events.service.js";
@@ -38,13 +37,12 @@ import {
 } from "./utils/notify.util.js";
 import { formatTimestamp } from "./utils/format.util.js";
 import { db } from "./services/firebase-config.js";
+import { chatIdFor, ensureChatExists, listenChatMessages, sendChatMessage, markChatRead } from "./services/chat.service.js";
 import {
-  chatIdFor,
-  ensureChatExists,
-  listenChatMessages,
-  sendChatMessage,
-  markChatRead,
-} from "./services/chat.service.js";
+  setActiveChat,
+  startPresenceHeartbeat,
+  stopPresenceHeartbeat,
+} from "./services/presence.service.js";
 async function ensurePublicProfileOnLogin(user) {
   const ref = db.collection("profiles_public").doc(user.uid);
   const snap = await ref.get();
@@ -654,30 +652,32 @@ const app = Vue.createApp({
       navigator.clipboard?.writeText(this.user.uid);
       alert("Freundschaftscode kopiert!");
     },
-    openChat(friend) {
-      if (!friend?.id) return;
-      this.activeChat.unsubscribe?.();
+openChat(friend) {
+  if (!friend?.id) return;
 
-      const cid = chatIdFor(this.user.uid, friend.id);
-      this.activeChat = {
-        chatId: cid,
-        partner: friend,
-        messages: [],
-        unsubscribe: null,
-      };
+  // alten Listener abbauen
+  this.activeChat.unsubscribe?.();
 
-      // Chat-Dokument sicherstellen (falls noch nie geschrieben wurde)
-      ensureChatExists(this.user.uid, friend.id).catch(() => {});
+  const cid = chatIdFor(this.user.uid, friend.id);
+  this.activeChat.chatId = cid;
+  this.activeChat.partner = friend;
+  this.activeChat.messages = [];
 
-      this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
-        this.activeChat.messages = msgs;
-        this.$nextTick(() => {
-          const box = document.querySelector("#chatMessages");
-          if (box) box.scrollTop = box.scrollHeight;
-        });
-        markChatRead(cid, this.user.uid).catch(() => {});
-      });
-    },
+  // Live-Nachrichten hören
+  this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
+    this.activeChat.messages = msgs;
+
+    // ⬇️ Auto-Scroll + Input fokussieren
+    this.$nextTick(() => {
+      const box = document.querySelector("#chatMessages");
+      if (box) box.scrollTop = box.scrollHeight;
+      this.$refs.chatInput?.focus();        // <— die Änderung
+    });
+
+    // als gelesen markieren
+    markChatRead(cid, this.user.uid).catch(() => {});
+  });
+},
     async sendMessage() {
       const txt = this.chatMessageInput?.trim();
       if (!txt || !this.activeChat?.partner?.id) return;
@@ -689,15 +689,10 @@ const app = Vue.createApp({
       this.chatMessageInput = "";
     },
 
-    closeChat() {
-      this.activeChat.unsubscribe?.();
-      this.activeChat = {
-        chatId: null,
-        partner: null,
-        messages: [],
-        unsubscribe: null,
-      };
-    },
+closeChat() {
+  this.activeChat.unsubscribe?.();
+  this.activeChat = { chatId: null, partner: null, messages: [], unsubscribe: null };
+},
 
     // ---------- THC Rechner ----------
     calculateThcAbbau() {
