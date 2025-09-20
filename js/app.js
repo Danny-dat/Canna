@@ -113,6 +113,7 @@ const app = Vue.createApp({
       userMarkers: [],
       friendMarkers: [],
       eventMarkers: [],
+      mapUnsub: [],
       firestoreListeners: [],
     };
   },
@@ -147,47 +148,54 @@ methods: {
     }
     throw new Error(`Element ${selector} nicht sichtbar/sized`);
   },
-  _unmountMap() {
-    if (this.map?.remove) {
-      this.map.remove();
-      this.map = null;
-    }
+
+  // Map vollständig abbauen (Listener + Marker + Map)
+  teardownMap() {
+    try { this.mapUnsubs?.forEach(u => { try { u && u(); } catch {} }); } catch {}
+    this.mapUnsubs = [];
+
+    try { this.userMarkers.forEach(m => m.remove()); } catch {}
+    try { this.friendMarkers.forEach(m => m.remove()); } catch {}
+    try { this.eventMarkers.forEach(m => m.remove()); } catch {}
+    this.userMarkers = [];
+    this.friendMarkers = [];
+    this.eventMarkers = [];
+
+    if (this.map?.remove) this.map.remove();
+    this.map = null;
   },
+
   async _mountMapIfNeeded() {
-    // Nur auf dem Dashboard erstellen
     if (this.currentView !== "dashboard") return;
 
     const el = document.getElementById("map");
-    // neu bauen, wenn keine Map existiert oder Container gewechselt wurde
     if (!this.map || !el || this.map._container !== el) {
-      this._unmountMap();
-      try {
-        await this._waitForSizedElement("#map");
-      } catch (e) {
-        console.warn("Map init TIMEOUT:", e);
-        return;
-      }
+      this.teardownMap();
+      try { await this._waitForSizedElement("#map"); }
+      catch (e) { console.warn("Map init TIMEOUT:", e); return; }
+
       this.map = initMap("map");
 
-      // eigene Konsum-Pins
-      const unsub = listenForConsumptionMarkers(this.map, this.user.uid, (markers) => {
-        this.userMarkers.forEach((m) => m.remove());
-        this.userMarkers = markers;
-      });
-      this.firestoreListeners.push(unsub);
+      // Eigene Konsum-Pins
+      const unsubConsumptions = listenForConsumptionMarkers(
+        this.map, this.user.uid,
+        (markers) => {
+          if (!this.map) return;                    // Guard
+          this.userMarkers.forEach(m => m.remove());
+          this.userMarkers = markers;
+        }
+      );
+      this.mapUnsubs.push(unsubConsumptions);
 
-      // Events setzen
+      // Event-Marker initial
       this.eventMarkers = updateEventMarkers(this.map, this.user.uid, this.events, this.eventMarkers);
 
-      // Nach Layout-Frame Größe justieren
+      // Layout/Resize
       requestAnimationFrame(() => this.map && this.map.invalidateSize());
-
-      // Resize-Handler registrieren
       const onResize = () => this.map && this.map.invalidateSize();
       window.addEventListener("resize", onResize);
-      this.firestoreListeners.push(() => window.removeEventListener("resize", onResize));
+      this.mapUnsubs.push(() => window.removeEventListener("resize", onResize));
     } else {
-      // Map existiert & hängt am richtigen Container → Größe nur aktualisieren
       this.map.invalidateSize();
     }
   },
@@ -199,8 +207,8 @@ methods: {
   },
 
   setView(view) {
-    // Beim Verlassen des Dashboards Map aufräumen
-    if (this.currentView === "dashboard" && view !== "dashboard") this._unmountMap();
+    // Dashboard verlassen → Map sauber entsorgen
+    if (this.currentView === "dashboard" && view !== "dashboard") this.teardownMap();
 
     this.currentView = view;
     this.showMenu = false;
@@ -223,12 +231,17 @@ methods: {
 
     this.unsubscribeEvents = listenForEvents((events) => {
       this.events = events;
-      this.eventMarkers = updateEventMarkers(this.map, this.user.uid, this.events, this.eventMarkers);
+      if (this.map) { // Guard: nur zeichnen, wenn Map existiert
+        this.eventMarkers = updateEventMarkers(
+          this.map, this.user.uid, this.events, this.eventMarkers
+        );
+      }
     });
 
     this.unsubscribeFriends = listenForFriends(this.user.uid, async (friends) => {
       this.friends = friends;
-      this.friendMarkers.forEach((m) => m.remove());
+      if (!this.map) return; // Guard
+      this.friendMarkers.forEach(m => m.remove());
       this.friendMarkers = await buildFriendMarkers(this.map, friends);
       this.toggleFriendMarkers();
     });
@@ -245,7 +258,9 @@ methods: {
   },
 
   cleanupListeners() {
-    this.firestoreListeners.forEach((u) => u && u());
+    // ALLES aufräumen
+    this.teardownMap();
+    try { this.firestoreListeners.forEach(u => u && u()); } catch {}
     this.firestoreListeners = [];
     this.unsubscribeEvents?.();
     this.unsubscribeFriends?.();
@@ -261,13 +276,8 @@ methods: {
     if (!phoneRegex.test(pn)) return alert("Bitte gib eine gültige deutsche Handynummer ein.");
     await register({ email: this.form.email, password: this.form.password, displayName: this.form.displayName, phoneNumber: pn });
   },
-  doLogin() {
-    return login(this.form.email, this.form.password).catch((e) => alert(e.message));
-  },
-  doLogout() {
-    logout();
-    this.showMenu = false;
-  },
+  doLogin() { return login(this.form.email, this.form.password).catch(e => alert(e.message)); },
+  doLogout() { logout(); this.showMenu = false; },
 
   // ---------- User Data ----------
   async saveUserData() {
@@ -300,25 +310,27 @@ methods: {
         this.showAlert = true; return;
       }
 
-      // Tageslimit — indexfrei (nur userId filtern, clientseitig Datum prüfen)
+      // Tageslimit (Composite-Index: userId ASC, timestamp ASC)
       const today = new Date();
       const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
 
       let q;
       try {
-        q = await db.collection("consumptions").where("userId", "==", this.user.uid).get();
+        q = await db.collection("consumptions")
+          .where("userId", "==", this.user.uid)
+          .where("timestamp", ">=", start)
+          .orderBy("timestamp", "asc")
+          .limit(this.settings.consumptionThreshold)
+          .get();
       } catch (e) {
         console.error("Firestore-Query-Fehler:", e);
-        this.alertMessage = "Fehler beim Laden der Tagesdaten. Details in der Konsole.";
+        this.alertMessage = (e.code === "failed-precondition")
+          ? "Der benötigte Firestore-Index wird (noch) erstellt. Bitte gleich nochmal versuchen."
+          : "Fehler beim Laden der Daten.";
         this.showAlert = true; return;
       }
-      const todayCount = q.docs.filter(d => {
-        const ts = d.data().timestamp;
-        const dt = ts?.toDate ? ts.toDate() : ts;
-        return dt >= start;
-      }).length;
 
-      if (todayCount >= this.settings.consumptionThreshold) {
+      if (q.docs.length >= this.settings.consumptionThreshold) {
         this.alertMessage = `Du hast dein Tageslimit von ${this.settings.consumptionThreshold} Einheiten erreicht!`;
         this.showAlert = true;
         playSoundAndVibrate();
@@ -326,10 +338,10 @@ methods: {
       }
 
       // Geolocation (soft-fail)
-      const pos = await new Promise((resolve) => {
+      const pos = await new Promise(resolve => {
         if (!("geolocation" in navigator)) return resolve(null);
         navigator.geolocation.getCurrentPosition(
-          (p) => resolve(p),
+          p => resolve(p),
           () => resolve(null),
           { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
         );
@@ -350,6 +362,7 @@ methods: {
         this.showAlert = true; return;
       }
 
+      // UI reset + Benachrichtigen + Stats
       this.selection = { product: null, device: null };
 
       try {
@@ -358,9 +371,7 @@ methods: {
           this.userData.displayName || this.user.email,
           this.settings.consumptionThreshold
         );
-      } catch (e) {
-        console.warn("notifyFriendsIfReachedLimit Fehler:", e);
-      }
+      } catch (e) { console.warn("notifyFriendsIfReachedLimit Fehler:", e); }
 
       await this.refreshStats();
       this.alertMessage = "Eintrag gespeichert.";
@@ -379,6 +390,7 @@ methods: {
 
   // ---------- Map ----------
   toggleFriendMarkers() {
+    if (!this.map) return; // Guard
     setMarkerVisibility(this.map, this.friendMarkers, this.showFriendsOnMap);
   },
 
@@ -439,12 +451,13 @@ methods: {
 
   // ---------- Notifications ----------
   listenForNotifications() {
-    const unsub = db
-      .collection("notifications")
+    const unsub = db.collection("notifications")
       .where("recipientId", "==", this.user.uid)
       .onSnapshot((snap) => {
         const all = snap.docs.map((d) => ({ id: d.id, ...d.data() }));
-        all.sort((a, b) => (b.timestamp?.toDate?.() ?? b.timestamp) - (a.timestamp?.toDate?.() ?? a.timestamp));
+        all.sort((a, b) =>
+          (b.timestamp?.toDate?.() ?? b.timestamp) - (a.timestamp?.toDate?.() ?? a.timestamp)
+        );
         this.notifications = all.slice(0, 10);
       });
     this.firestoreListeners.push(unsub);
@@ -466,7 +479,6 @@ methods: {
       this.dashboardBannerIndex = (this.dashboardBannerIndex + 1) % this.dashboardBanners.length;
     }, 5000);
   },
-}
-,
+},
 });
 app.mount("#app");
