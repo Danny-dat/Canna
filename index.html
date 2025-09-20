@@ -346,72 +346,73 @@
       </main>
     </div>
 
-<!-- Chat Overlay -->
-<div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
-  <div class="chat-window" @click.stop>
-    <div class="chat-header">
-      <h3>
-        Chat mit
-        {{ activeChat.partner.username
-           || activeChat.partner.displayName
-           || activeChat.partner.label
-           || activeChat.partner.email
-           || activeChat.partner.id }}
-      </h3>
-      <button @click="closeChat" class="btn-close-chat">&times;</button>
+    <!-- Chat Overlay -->
+    <div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
+      <div class="chat-window" @click.stop>
+        <div class="chat-header">
+          <h3>
+            Chat mit
+            {{ activeChat.partner.username
+              || activeChat.partner.displayName
+              || activeChat.partner.label
+              || activeChat.partner.email
+              || activeChat.partner.id }}
+          </h3>
+          <button @click="closeChat" class="btn-close-chat">&times;</button>
+        </div>
+
+        <!-- WICHTIG: ID für Auto-Scroll -->
+    <div id="chatMessages" ref="chatMessages" class="chat-messages">
+      <div
+        v-for="m in activeChat.messages"
+        :key="m.id"
+        class="message-bubble"
+        :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }"
+      >
+        <p>{{ m.text }}</p>
+      </div>
     </div>
 
-    <!-- WICHTIG: ID für Auto-Scroll -->
-<div id="chatMessages" ref="chatMessages" class="chat-messages">
-  <div
-    v-for="m in activeChat.messages"
-    :key="m.id"
-    class="message-bubble"
-    :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }"
-  >
-    <p>{{ m.text }}</p>
-  </div>
-</div>
+    <input
+      type="text"
+      v-model="chatMessageInput"
+      @keyup.enter="sendMessage"
+      placeholder="Nachricht..."
+      ref="chatInput"
+    />
 
-<input
-  type="text"
-  v-model="chatMessageInput"
-  @keyup.enter="sendMessage"
-  placeholder="Nachricht..."
-  ref="chatInput"
-/>
-
-    <!-- Settings Overlay -->
-    <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
-      <div class="settings-window" @click.stop>
-        <div class="settings-header">
-          <h3>Einstellungen</h3>
-          <button @click="toggleSettings" class="btn-close-settings">&times;</button>
-        </div>
-        <div class="settings-content">
-          <div class="setting-item">
-            <label for="daily-limit">Tägliches Konsumlimit</label>
-            <input type="number" id="daily-limit" v-model.number="settings.consumptionThreshold" min="1">
+        <!-- Settings Overlay -->
+        <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
+          <div class="settings-window" @click.stop>
+            <div class="settings-header">
+              <h3>Einstellungen</h3>
+              <button @click="toggleSettings" class="btn-close-settings">&times;</button>
+            </div>
+            <div class="settings-content">
+              <div class="setting-item">
+                <label for="daily-limit">Tägliches Konsumlimit</label>
+                <input type="number" id="daily-limit" v-model.number="settings.consumptionThreshold" min="1">
+              </div>
+              <button @click="saveUserSettings" class="btn-save">Speichern</button>
+            </div>
           </div>
-          <button @click="saveUserSettings" class="btn-save">Speichern</button>
         </div>
-      </div>
-    </div>
 
-    <!-- Alert -->
-    <div v-if="showAlert" class="alert-overlay">
-      <div class="alert-window" @click.stop>
-        <div class="alert-header">
-          <h3>Warnung</h3>
-        </div>
-        <div class="alert-content">
-          <p>{{ alertMessage }}</p>
-          <button @click="closeAlert" class="btn-close-alert">Schließen</button>
+        <!-- Alert -->
+        <div v-if="showAlert" class="alert-overlay">
+          <div class="alert-window" @click.stop>
+            <div class="alert-header">
+              <h3>Warnung</h3>
+            </div>
+            <div class="alert-content">
+              <p>{{ alertMessage }}</p>
+              <button @click="closeAlert" class="btn-close-alert">Schließen</button>
+            </div>
+          </div>
         </div>
       </div>
     </div>
   </div>
-
   <!-- App Code -->
   <script type="module" src="./js/app.js"></script>
 </body>
