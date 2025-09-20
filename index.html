@@ -182,12 +182,19 @@
           <hr>
           <h4>Deine Freunde</h4>
           <div v-if="friends.length === 0" class="empty-state">Noch keine Freunde hinzugefügt.</div>
-          <div v-for="friend in friends" :key="friend.id" class="friend-item" @click="openChat(friend)">
-            <p>{{ friend.displayName || friend.email }}</p>
-            <span>Chat öffnen</span>
+          <div v-for="friend in friends" :key="friend.id" class="friend-item">
+            <fieldset>
+            <div class="friend-main" @click="openChat(friend)">
+              <p>{{ friend.username || friend.displayName || friend.label || friend.id }}</p>
+              <span>Chat öffnen</span>
+            </div>
+            <h5>User Aktionen</h5>
+            <div class="friend-actions">
+              <button class="btn-danger" @click.stop="removeFriendB(friend)">Entfernen</button>
+              <button class="btn-ghost" @click.stop="blockFriendB(friend)">Blockieren</button>
+            </div>
+            </fieldset>
           </div>
-        </div>
-
         <!-- Events -->
         <div v-if="currentView === 'events'" class="events-page card">
           <h3>Community Events</h3>

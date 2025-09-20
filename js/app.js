@@ -12,6 +12,10 @@ import {
   acceptRequest as acceptFriendRequest,
   declineRequest as declineFriendRequest,
   listenForIncomingRequests,
+  removeFriend,
+  blockFriend,
+  unblockFriend,
+  syncFriendshipsOnLogin,
 } from "./services/friends.service.js";
 import { listenForEvents, voteEvent } from "./services/events.service.js";
 import {
@@ -556,6 +560,41 @@ const app = Vue.createApp({
       this.friendRequests = await fetchFriendRequests(this.user.uid);
       if (!this.friendRequests.length)
         alert("Keine neuen Freundschaftsanfragen.");
+    },
+
+    async removeFriendB(friend) {
+      const friendUid = friend?.id;
+      if (!friendUid) return;
+
+      const name =
+        friend.username || friend.displayName || friend.label || friendUid;
+      if (!confirm(`Freundschaft mit "${name}" beenden?`)) return;
+
+      try {
+        await removeFriend(this.user.uid, friendUid);
+        alert("Freundschaft beendet.");
+      } catch (e) {
+        console.error(e);
+        alert(e.message || "Konnte Freundschaft nicht beenden.");
+      }
+    },
+
+    // optional
+    async blockFriendB(friend) {
+      const friendUid = friend?.id;
+      if (!friendUid) return;
+      if (
+        !confirm(
+          `"${friend.username || friend.displayName || friend.id}" blockieren?`
+        )
+      )
+        return;
+      try {
+        await blockFriend(this.user.uid, friendUid);
+        alert("Benutzer blockiert.");
+      } catch (e) {
+        alert(e.message || "Blockieren fehlgeschlagen.");
+      }
     },
 
     // neue, eindeutig benannte Wrapper:
