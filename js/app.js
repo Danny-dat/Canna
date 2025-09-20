@@ -37,7 +37,12 @@ import {
 } from "./utils/notify.util.js";
 import { formatTimestamp } from "./utils/format.util.js";
 import { db } from "./services/firebase-config.js";
-import { chatIdFor, ensureChatExists, listenChatMessages, sendChatMessage, } from "./services/chat.service.js";
+import {
+  chatIdFor,
+  ensureChatExists,
+  listenChatMessages,
+  sendChatMessage,
+} from "./services/chat.service.js";
 import {
   setActiveChat,
   startPresenceHeartbeat,
@@ -652,38 +657,38 @@ const app = Vue.createApp({
       navigator.clipboard?.writeText(this.user.uid);
       alert("Freundschaftscode kopiert!");
     },
-async openChat(friend) {
-  if (!friend?.id) return;
+    async openChat(friend) {
+      if (!friend?.id) return;
 
-  // alten Listener abbauen
-  this.activeChat.unsubscribe?.();
+      // alten Listener abbauen
+      this.activeChat.unsubscribe?.();
 
-  const cid = chatIdFor(this.user.uid, friend.id);
+      const cid = chatIdFor(this.user.uid, friend.id);
 
-  // 1) Chat-Dokument sicher anlegen (wichtig für Rules bei update)
-  await ensureChatExists(this.user.uid, friend.id);
+      // 1) Chat-Dokument sicher anlegen (wichtig für Rules bei update)
+      await ensureChatExists(this.user.uid, friend.id);
 
-  // 2) lokalen State setzen
-  this.activeChat.chatId = cid;
-  this.activeChat.partner = friend;
-  this.activeChat.messages = [];
+      // 2) lokalen State setzen
+      this.activeChat.chatId = cid;
+      this.activeChat.partner = friend;
+      this.activeChat.messages = [];
 
-  // 3) Presence setzen + Heartbeat starten
-  setActiveChat(this.user.uid, cid).catch(() => {});
-  startPresenceHeartbeat(this.user.uid);
+      // 3) Presence setzen + Heartbeat starten
+      setActiveChat(this.user.uid, cid).catch(() => {});
+      startPresenceHeartbeat(this.user.uid);
 
-  // 4) Live-Nachrichten hören
-  this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
-    this.activeChat.messages = msgs;
+      // 4) Live-Nachrichten hören
+      this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
+        this.activeChat.messages = msgs;
 
-    // Auto-Scroll + Input fokussieren
-    this.$nextTick(() => {
-      const box = document.querySelector("#chatMessages");
-      if (box) box.scrollTop = box.scrollHeight;
-      this.$refs.chatInput?.focus();
-    });
-  });
-},
+        // Auto-Scroll + Input fokussieren
+        this.$nextTick(() => {
+          const box = document.querySelector("#chatMessages");
+          if (box) box.scrollTop = box.scrollHeight;
+          this.$refs.chatInput?.focus();
+        });
+      });
+    },
     async sendMessage() {
       const txt = this.chatMessageInput?.trim();
       if (!txt || !this.activeChat?.partner?.id) return;
@@ -695,12 +700,17 @@ async openChat(friend) {
       this.chatMessageInput = "";
     },
 
- closeChat() {
-   this.activeChat.unsubscribe?.();
-   this.activeChat = { chatId: null, partner: null, messages: [], unsubscribe: null };
-   setActiveChat(this.user.uid, null);
-   stopPresenceHeartbeat();
- },
+    closeChat() {
+      this.activeChat.unsubscribe?.();
+      this.activeChat = {
+        chatId: null,
+        partner: null,
+        messages: [],
+        unsubscribe: null,
+      };
+      setActiveChat(this.user.uid, null);
+      stopPresenceHeartbeat();
+    },
 
     // ---------- THC Rechner ----------
     calculateThcAbbau() {
@@ -710,85 +720,96 @@ async openChat(friend) {
     },
 
     // ---------- Notifications ----------
-listenForNotifications() {
-  const unsub = db
-    .collection("notifications")
-    .where("recipientId", "==", this.user.uid)
-    .onSnapshot((snap) => {
-      let addedUnread = false;
+    listenForNotifications() {
+      const unsub = db
+        .collection("notifications")
+        .where("recipientId", "==", this.user.uid)
+        .onSnapshot((snap) => {
+          let addedUnread = false;
 
-      const all = snap.docs
-        .map((d) => ({ id: d.id, ...d.data() }))
-        // ✨ Filter: wenn aktuell ein Chat offen, keine Notis für diesen Chat
-        .filter((n) => {
-          if (n.type === "chat_message" && this.activeChat?.chatId) {
-            // wenn der Sender derselbe wie der Chat-Partner ist → nicht anzeigen
-            return n.senderId !== this.activeChat.partner?.id;
-          }
-          return true;
-        });
+          const all = snap.docs
+            .map((d) => ({ id: d.id, ...d.data() }))
+            // ✨ Filter: wenn aktuell ein Chat offen, keine Notis für diesen Chat
+            .filter((n) => {
+              if (n.type === "chat_message" && this.activeChat?.chatId) {
+                // wenn der Sender derselbe wie der Chat-Partner ist → nicht anzeigen
+                return n.senderId !== this.activeChat.partner?.id;
+              }
+              return true;
+            });
 
-      all.sort(
-        (a, b) =>
-          (b.timestamp?.toDate?.() ?? b.timestamp) -
-          (a.timestamp?.toDate?.() ?? a.timestamp)
-      );
+          all.sort(
+            (a, b) =>
+              (b.timestamp?.toDate?.() ?? b.timestamp) -
+              (a.timestamp?.toDate?.() ?? a.timestamp)
+          );
 
-      this.notifications = all.slice(0, 10);
+          this.notifications = all.slice(0, 10);
 
-      // nur Sound/Vibration, wenn wirklich neue relevante Notification dabei ist
-      snap.docChanges().forEach((ch) => {
-        if (ch.type === "added") {
-          const d = ch.doc.data();
-          if (!d.read) {
-            if (!(d.type === "chat_message" && this.activeChat?.chatId && d.senderId === this.activeChat.partner?.id)) {
-              addedUnread = true;
+          // nur Sound/Vibration, wenn wirklich neue relevante Notification dabei ist
+          snap.docChanges().forEach((ch) => {
+            if (ch.type === "added") {
+              const d = ch.doc.data();
+              if (!d.read) {
+                if (
+                  !(
+                    d.type === "chat_message" &&
+                    this.activeChat?.chatId &&
+                    d.senderId === this.activeChat.partner?.id
+                  )
+                ) {
+                  addedUnread = true;
+                }
+              }
             }
-          }
-        }
-      });
+          });
 
-      if (addedUnread) {
+          if (addedUnread) {
+            try {
+              playSoundAndVibrate();
+            } catch {}
+          }
+        });
+      this.firestoreListeners.push(unsub);
+    },
+    async handleNotificationClick(n) {
+      // 1) als gelesen markieren (leise, ohne UI-Flackern)
+      if (!n.read) {
         try {
-          playSoundAndVibrate();
+          await db.collection("notifications").doc(n.id).update({ read: true });
         } catch {}
       }
-    });
-  this.firestoreListeners.push(unsub);
-},
-async handleNotificationClick(n) {
-  // 1) als gelesen markieren (leise, ohne UI-Flackern)
-  if (!n.read) {
-    try { await db.collection("notifications").doc(n.id).update({ read: true }); } catch {}
-  }
 
-  // 2) Nur Chat-Notis deeplinken
-  if (n.type !== "chat_message") return;
+      // 2) Nur Chat-Notis deeplinken
+      if (n.type !== "chat_message") return;
 
-  // Absender ist dein Chat-Partner
-  const partnerId = n.senderId;
+      // Absender ist dein Chat-Partner
+      const partnerId = n.senderId;
 
-  // 3) Partner-Objekt finden/bauen
-  let friend = this.friends.find(f => f.id === partnerId);
-  if (!friend) {
-    // Minimaldaten nachladen (optional für Label/Avatar)
-    try {
-      const snap = await db.collection("profiles_public").doc(partnerId).get();
-      const d = snap.exists ? snap.data() : {};
-      friend = { id: partnerId, displayName: d?.displayName || partnerId };
-    } catch {
-      friend = { id: partnerId };
-    }
-  }
+      // 3) Partner-Objekt finden/bauen
+      let friend = this.friends.find((f) => f.id === partnerId);
+      if (!friend) {
+        // Minimaldaten nachladen (optional für Label/Avatar)
+        try {
+          const snap = await db
+            .collection("profiles_public")
+            .doc(partnerId)
+            .get();
+          const d = snap.exists ? snap.data() : {};
+          friend = { id: partnerId, displayName: d?.displayName || partnerId };
+        } catch {
+          friend = { id: partnerId };
+        }
+      }
 
-  // 4) Notifications-Panel schließen (optional)
-  this.showNotifications = false;
+      // 4) Notifications-Panel schließen (optional)
+      this.showNotifications = false;
 
-  // 5) View setzen, Chat öffnen
-  if (this.currentView !== "dashboard") this.setView("dashboard");
-  // openChat existiert bereits
-  this.openChat(friend);
-},
+      // 5) View setzen, Chat öffnen
+      if (this.currentView !== "dashboard") this.setView("dashboard");
+      // openChat existiert bereits
+      this.openChat(friend);
+    },
     async markNotificationAsRead(n) {
       if (!n.read)
         await db.collection("notifications").doc(n.id).update({ read: true });
