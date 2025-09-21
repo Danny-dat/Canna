@@ -29,7 +29,7 @@ import {
   copyToClipboard,
 } from "./services/friends.service.js";
 
-import { initFriendsFeature } from "./features/friends.js";
+import { initFriendsFeature, friendsActions } from "./features/friends.js";
 import { initEventsFeature, voteEvent } from "./features/events.js";
 import {
   listenForNotifications,
@@ -56,6 +56,7 @@ const app = createApp({
       alertMessage: "",
       bannerInterval: null,
       shareMenuOpen: false,
+      _friends: null,
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
@@ -223,6 +224,78 @@ const app = createApp({
       }, 5000);
     },
 
+    // ------ Friends Actions (UI-Buttons) ------
+    async actionSendFriendRequest() {
+      const toUid = (this.friendIdInput || "").trim();
+      if (!toUid) return alert("Bitte Freundschaftscode eingeben.");
+      if (!this.user?.uid) return alert("Nicht eingeloggt.");
+      if (toUid === this.user.uid)
+        return alert("Du kannst dich nicht selbst hinzufügen.");
+
+      try {
+        await this._friends.send(toUid);
+        this.friendIdInput = "";
+        this.alertMessage =
+          "Anfrage gesendet (falls noch keine offene vorhanden ist).";
+        this.showAlert = true;
+      } catch (e) {
+        alert(e?.message || "Konnte Anfrage nicht senden.");
+      }
+    },
+
+    async actionFetchFriendRequests() {
+      try {
+        const list = await this._friends.fetchRequests();
+        this.friendRequests = list;
+      } catch (e) {
+        alert(e?.message || "Konnte Anfragen nicht laden.");
+      }
+    },
+
+    async acceptRequest(req) {
+      try {
+        await this._friends.accept(req);
+        this.alertMessage = "Anfrage angenommen.";
+        this.showAlert = true;
+      } catch (e) {
+        alert(e?.message || "Konnte Anfrage nicht annehmen.");
+      }
+    },
+
+    async declineRequest(reqId) {
+      try {
+        await this._friends.decline(reqId);
+        this.alertMessage = "Anfrage abgelehnt.";
+        this.showAlert = true;
+      } catch (e) {
+        alert(e?.message || "Konnte Anfrage nicht ablehnen.");
+      }
+    },
+
+    async removeFriendB(friend) {
+      if (!friend?.id) return;
+      if (!confirm("Freund entfernen?")) return;
+      try {
+        await this._friends.remove(friend);
+        this.alertMessage = "Freund entfernt.";
+        this.showAlert = true;
+      } catch (e) {
+        alert(e?.message || "Konnte Freund nicht entfernen.");
+      }
+    },
+
+    async blockFriendB(friend) {
+      if (!friend?.id) return;
+      if (!confirm("Freund blockieren?")) return;
+      try {
+        await this._friends.block(friend);
+        this.alertMessage = "Freund blockiert.";
+        this.showAlert = true;
+      } catch (e) {
+        alert(e?.message || "Konnte Freund nicht blockieren.");
+      }
+    },
+
     // ---------------- Bootstrap Features ----------------
     async initAppFeatures() {
       // Settings + UserData
@@ -248,6 +321,7 @@ const app = createApp({
         },
       });
       this._unsubs.push(stopFriends);
+      this._friends = friendsActions(this);
 
       // Events (live)
       const stopEvents = initEventsFeature(this, {

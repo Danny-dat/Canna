@@ -55,24 +55,38 @@ function pickAllowed(obj, allowed) {
  * ---------------------------------------------------------*/
 
 /* Anfrage senden + Noti */
-export async function sendFriendRequest({ fromUid, fromEmail, fromDisplayName, toUid }) {
+export async function sendFriendRequest({
+  fromUid,
+  fromEmail,
+  fromDisplayName,
+  toUid,
+}) {
   if (!fromUid || !toUid) throw new Error("UID fehlt.");
-  if (fromUid === toUid) throw new Error("Du kannst dich nicht selbst hinzufügen.");
+  if (fromUid === toUid)
+    throw new Error("Du kannst dich nicht selbst hinzufügen.");
 
   // Duplikate (pending) vermeiden
   const [q1, q2] = await Promise.all([
-    db.collection("friend_requests")
-      .where("fromUid","==",fromUid).where("toUid","==",toUid)
-      .where("status","==","pending").limit(1).get(),
-    db.collection("friend_requests")
-      .where("fromUid","==",toUid).where("toUid","==",fromUid)
-      .where("status","==","pending").limit(1).get(),
+    db
+      .collection("friend_requests")
+      .where("fromUid", "==", fromUid)
+      .where("toUid", "==", toUid)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get(),
+    db
+      .collection("friend_requests")
+      .where("fromUid", "==", toUid)
+      .where("toUid", "==", fromUid)
+      .where("status", "==", "pending")
+      .limit(1)
+      .get(),
   ]);
   if (!q1.empty || !q2.empty) return;
 
   const reqRef = await db.collection("friend_requests").add({
     fromUid,
-    fromEmail: fromEmail ?? null,          // create erlaubt weitere Felder
+    fromEmail: fromEmail ?? null, // create erlaubt weitere Felder
     fromDisplayName: fromDisplayName ?? null,
     toUid,
     status: "pending",
@@ -85,7 +99,9 @@ export async function sendFriendRequest({ fromUid, fromEmail, fromDisplayName, t
     requestId: reqRef.id,
     recipientId: toUid,
     senderId: fromUid,
-    message: `${fromDisplayName || fromEmail || "Jemand"} hat dir eine Freundschaftsanfrage gesendet.`,
+    message: `${
+      fromDisplayName || fromEmail || "Jemand"
+    } hat dir eine Freundschaftsanfrage gesendet.`,
     read: false,
     timestamp: TS(),
   });
@@ -93,53 +109,71 @@ export async function sendFriendRequest({ fromUid, fromEmail, fromDisplayName, t
 
 /* Eingehende (pending) live hören */
 export function listenForIncomingRequests(myUid, cb) {
-  return db.collection("friend_requests")
-    .where("participants","array-contains", myUid)
-    .onSnapshot(snap => {
-      const incoming = snap.docs.map(d=>({id:d.id,...d.data()}))
-        .filter(r => r.toUid === myUid && r.status === "pending");
+  return db
+    .collection("friend_requests")
+    .where("participants", "array-contains", myUid)
+    .onSnapshot((snap) => {
+      const incoming = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((r) => r.toUid === myUid && r.status === "pending");
       cb(incoming);
     });
 }
 
 /* Optional: manuell laden */
 export async function fetchFriendRequests(myUid) {
-  const snap = await db.collection("friend_requests")
-    .where("participants","array-contains", myUid).get();
-  return snap.docs.map(d=>({id:d.id,...d.data()}))
-    .filter(r => r.toUid === myUid && r.status === "pending");
+  const snap = await db
+    .collection("friend_requests")
+    .where("participants", "array-contains", myUid)
+    .get();
+  return snap.docs
+    .map((d) => ({ id: d.id, ...d.data() }))
+    .filter((r) => r.toUid === myUid && r.status === "pending");
 }
 
 /* Freunde live hören: nur status === accepted */
 export function listenForFriends(myUid, cb) {
-  return db.collection("friend_requests")
-    .where("participants","array-contains", myUid)
+  return db
+    .collection("friend_requests")
+    .where("participants", "array-contains", myUid)
     .onSnapshot(async (snap) => {
-      const accepted = snap.docs.map(d=>({id:d.id,...d.data()}))
-        .filter(r => r.status === "accepted");
+      const accepted = snap.docs
+        .map((d) => ({ id: d.id, ...d.data() }))
+        .filter((r) => r.status === "accepted");
 
-      const friendIds = Array.from(new Set(
-        accepted.map(r => (r.fromUid === myUid ? r.toUid : r.fromUid))
-      ));
+      const friendIds = Array.from(
+        new Set(
+          accepted.map((r) => (r.fromUid === myUid ? r.toUid : r.fromUid))
+        )
+      );
       if (!friendIds.length) return cb([]);
 
       const profiles = await Promise.all(
-        friendIds.map(id => db.collection("profiles_public").doc(id).get().catch(()=>null))
+        friendIds.map((id) =>
+          db
+            .collection("profiles_public")
+            .doc(id)
+            .get()
+            .catch(() => null)
+        )
       );
 
-const friends = friendIds.map((id, i) => {
-    const ps = profiles[i];
-    const pub = ps && ps.exists ? (ps.data() || {}) : {};
-    const label = pub.username || pub.displayName || (id ? (id ? `${id.slice(0,6)}…` : '') : ''); // Check if id exists
-    return {
-        id,
-        label,
-        displayName: pub.displayName ?? null,
-        username: pub.username ?? null,
-        photoURL: pub.photoURL ?? null,
-        lastLocation: pub.lastLocation ?? null,
-    };
-});
+      const friends = friendIds.map((id, i) => {
+        const ps = profiles[i];
+        const pub = ps && ps.exists ? ps.data() || {} : {};
+        const label =
+          pub.username ||
+          pub.displayName ||
+          (id ? (id ? `${id.slice(0, 6)}…` : "") : ""); // Check if id exists
+        return {
+          id,
+          label,
+          displayName: pub.displayName ?? null,
+          username: pub.username ?? null,
+          photoURL: pub.photoURL ?? null,
+          lastLocation: pub.lastLocation ?? null,
+        };
+      });
 
       cb(friends);
     });
@@ -148,7 +182,8 @@ const friends = friendIds.map((id, i) => {
 /* Anfrage annehmen */
 export async function acceptRequest(myUid, request) {
   if (!request?.id) throw new Error("Request-ID fehlt.");
-  if (request.toUid !== myUid) throw new Error("Nur der Empfänger darf annehmen.");
+  if (request.toUid !== myUid)
+    throw new Error("Nur der Empfänger darf annehmen.");
 
   await safeUpdateRequestFull(request.id, {
     status: "accepted",
@@ -194,14 +229,17 @@ export async function declineRequest(myUid, requestOrId) {
 export async function removeFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  const snap = await db.collection("friend_requests")
-    .where("participants","array-contains", myUid).get();
+  const snap = await db
+    .collection("friend_requests")
+    .where("participants", "array-contains", myUid)
+    .get();
 
-  const doc = snap.docs.find(d => {
+  const doc = snap.docs.find((d) => {
     const x = d.data();
-    return x.status === "accepted" && (
-      (x.fromUid === myUid && x.toUid === friendUid) ||
-      (x.fromUid === friendUid && x.toUid === myUid)
+    return (
+      x.status === "accepted" &&
+      ((x.fromUid === myUid && x.toUid === friendUid) ||
+        (x.fromUid === friendUid && x.toUid === myUid))
     );
   });
 
@@ -230,13 +268,17 @@ export async function removeFriend(myUid, friendUid) {
 export async function blockFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  const snap = await db.collection("friend_requests")
-    .where("participants","array-contains", myUid).get();
+  const snap = await db
+    .collection("friend_requests")
+    .where("participants", "array-contains", myUid)
+    .get();
 
-  const doc = snap.docs.find(d => {
+  const doc = snap.docs.find((d) => {
     const x = d.data();
-    return (x.fromUid === myUid && x.toUid === friendUid) ||
-           (x.fromUid === friendUid && x.toUid === myUid);
+    return (
+      (x.fromUid === myUid && x.toUid === friendUid) ||
+      (x.fromUid === friendUid && x.toUid === myUid)
+    );
   });
   if (!doc) throw new Error("Kein Beziehungs-Dokument gefunden.");
 
@@ -250,14 +292,17 @@ export async function blockFriend(myUid, friendUid) {
 export async function unblockFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  const snap = await db.collection("friend_requests")
-    .where("participants","array-contains", myUid).get();
+  const snap = await db
+    .collection("friend_requests")
+    .where("participants", "array-contains", myUid)
+    .get();
 
-  const doc = snap.docs.find(d => {
+  const doc = snap.docs.find((d) => {
     const x = d.data();
-    return x.status === "blocked" && (
-      (x.fromUid === myUid && x.toUid === friendUid) ||
-      (x.fromUid === friendUid && x.toUid === myUid)
+    return (
+      x.status === "blocked" &&
+      ((x.fromUid === myUid && x.toUid === friendUid) ||
+        (x.fromUid === friendUid && x.toUid === myUid))
     );
   });
   if (!doc) throw new Error("Kein blockiertes Dokument gefunden.");
@@ -269,7 +314,7 @@ export async function unblockFriend(myUid, friendUid) {
 }
 
 export async function shareMyFriendCode(uid) {
-  const code = (uid || '').trim();
+  const code = (uid || "").trim();
   if (!code) throw new Error("Kein Nutzer angemeldet.");
 
   const text = `Mein CannaTrack Freundschaftscode: ${code}`;
