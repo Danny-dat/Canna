@@ -117,19 +117,19 @@ export async function buildFriendMarkers(map, friends = []) {
       }
 
       // 2) Fallback: letzter Konsum
-      if (!latLng) {
-        const q = await db
-          .collection("consumptions")
-          .where("userId", "==", friend.id)
-          .orderBy("timestamp", "asc")   // ASC + limitToLast vermeidet extra DESC-Index
-          .limitToLast(1)
-          .get();
+      // if (!latLng) {
+      //   const q = await db
+      //     .collection("consumptions")
+      //     .where("userId", "==", friend.id)
+      //     .orderBy("timestamp", "asc")   // ASC + limitToLast vermeidet extra DESC-Index
+      //     .limitToLast(1)
+      //     .get();
 
-        if (!q.empty) {
-          const last = q.docs[0].data();
-          latLng = toLatLng(last.location);
-        }
-      }
+      //   if (!q.empty) {
+      //     const last = q.docs[0].data();
+      //     latLng = toLatLng(last.location);
+      //   }
+      // }
 
       if (!latLng) continue;
 

@@ -24,6 +24,11 @@ const unsubConsumptions = listenForConsumptionMarkers(map, state.user.uid, (mark
 if (!map) return;
 userMarkers.forEach(m=>m.remove());
 userMarkers = markers;
+
+if(userMarkers?.length){
+     const group = L.featureGroup(userMarkers);
+try { map.fitBounds(group.getBounds().pad(0.2)); } catch {}
+}
 });
 mapUnsubs.push(unsubConsumptions);
 
