@@ -153,7 +153,8 @@ const app = createApp({
   mounted() {
     onAuth(async (user) => {
       if (user) {
-        this.user = { loggedIn: true, uid: user.uid, email: user.email };
+        const token = await user.getIdTokenResult(true);
+        this.user = { loggedIn: true, uid: user.uid, email: user.email, token, isAdmin: !!token.claims?.admin, };
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
       } else {
@@ -207,12 +208,12 @@ const app = createApp({
     },
 
     setView(view) {
-     if (this.currentView === "dashboard" && view !== "dashboard") {
-       this.mapFx?.teardown();
-     }
-     if (this.currentView === "globalChat" && view !== "globalChat") {
-       this.globalChatFx?.teardown();
-     }
+      if (this.currentView === "dashboard" && view !== "dashboard") {
+        this.mapFx?.teardown();
+      }
+      if (this.currentView === "globalChat" && view !== "globalChat") {
+        this.globalChatFx?.teardown();
+      }
 
       this.currentView = view;
       this.showMenu = false;
@@ -220,10 +221,11 @@ const app = createApp({
       if (view === "dashboard") {
         this.$nextTick(() => this.mapFx?.mountIfNeeded());
         this.refreshStats();
-     } else if (view === "globalChat") {
-       if (!this.globalChatFx) this.globalChatFx = createGlobalChatFeature(this, this);
-       this.globalChatFx.mount();
-       this.$nextTick(() => this.$refs?.globalChatInput?.focus?.());
+      } else if (view === "globalChat") {
+        if (!this.globalChatFx)
+          this.globalChatFx = createGlobalChatFeature(this, this);
+        this.globalChatFx.mount();
+        this.$nextTick(() => this.$refs?.globalChatInput?.focus?.());
       } else if (view === "statistics") {
         this.refreshStats();
       }
@@ -508,14 +510,14 @@ const app = createApp({
       return this.voteEvent(id, "down");
     },
 
-  // ---------------- Global Chat ----------------
-  openGlobalChat() {
-    if (this.currentView !== "globalChat") this.setView("globalChat");
-  },
-  
-  sendGlobalMessage() {
-    this.globalChatFx?.send();
-  },
+    // ---------------- Global Chat ----------------
+    openGlobalChat() {
+      if (this.currentView !== "globalChat") this.setView("globalChat");
+    },
+
+    sendGlobalMessage() {
+      this.globalChatFx?.send();
+    },
 
     // ---------------- Chat ----------------
     openChat(friend) {
