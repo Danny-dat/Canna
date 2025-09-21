@@ -130,7 +130,7 @@ export function listenForFriends(myUid, cb) {
       const friends = friendIds.map((id, i) => {
         const ps = profiles[i];
         const pub = ps && ps.exists ? (ps.data() || {}) : {};
-        const label = pub.username || pub.displayName || `${id.slice(0,6)}…`;
+        const label = pub.username || pub.displayName || (id ? `${id.slice(0,6)}…` : '');
         return {
           id,
           label,

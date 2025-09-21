@@ -10,9 +10,9 @@
   <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 
-  <!-- Vue 3 (global build) -->
+  <!-- Vue 3 -->
   <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-  <!-- Firebase 9 compat builds (v8 API surface) -->
+  <!-- Firebase 9 compat (v8 API) -->
   <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
@@ -22,107 +22,109 @@
   <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
 
-  <!-- KEIN statischer Tone.js-Tag hier! Wir laden Tone.js lazy nach erstem User-Klick. -->
+  <!-- Lazy Audio Init (für Benachrichtigungston) -->
   <script>
-    // Globales Promise, das Audio nach der ersten User-Geste initialisiert.
-    // Dein playSoundAndVibrate() wartet darauf: if (window.__audioReady) await window.__audioReady();
     window.__audioReady = (async () => {
-      // 1) Auf die erste User-Geste warten
       await new Promise(resolve => {
         const once = () => { document.removeEventListener('pointerdown', once); resolve(); };
         document.addEventListener('pointerdown', once, { once: true });
       });
-
-      // 2) Tone.js erst jetzt laden (verhindert Autoplay-Warnungen)
       await new Promise((resolve, reject) => {
         const s = document.createElement('script');
         s.src = "https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js";
-        s.onload = resolve;
-        s.onerror = reject;
-        document.head.appendChild(s);
+        s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
       });
-
-      // 3) AudioContext aktivieren
-      try {
-        if (window.Tone) {
-          await Tone.start();
-          console.log("Audio ready");
-        }
-        return true;
-      } catch (e) {
-        console.warn("Tone.start() failed:", e);
-        return false;
-      }
+      try { if (window.Tone) await Tone.start(); console.log("Audio ready"); return true; }
+      catch(e){ console.warn("Tone.start() failed:", e); return false; }
     })();
   </script>
 </head>
 <body>
   <div id="app">
+
+    <!-- ====================== Auth (Login/Registrieren) ====================== -->
     <div v-if="!user.loggedIn" class="landing-form card">
-      <div>
+      <div v-if="isLogin">
         <img class="logo" src="images/logo.png" alt="Logo" />
         <h2>Login</h2>
         <input v-model="form.email" type="email" autocomplete="username" placeholder="Email">
         <input v-model="form.password" type="password" autocomplete="current-password" placeholder="Passwort">
         <button @click="doLogin">Login</button>
-        <p class="auth-switch">Noch kein Account? <span @click="doRegister">Registrieren</span></p>
+        <p class="auth-switch"><span @click="isLogin = false">Noch kein Account? Registrieren</span></p>
+        <p class="auth-switch"><span @click="resetPasswordFlow">Passwort vergessen? Zurücksetzen</span></p>
       </div>
-      <div>
-        <footer class="footer-banner">
-          <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
-        </footer>
+
+      <div v-else>
+        <img class="logo" src="images/logo.png" alt="Logo" />
+        <h2>Registrieren</h2>
+        <input v-model="form.email" type="email" placeholder="Email">
+        <input v-model="form.password" type="password" placeholder="Passwort">
+        <input v-model="form.displayName" type="text" placeholder="Anzeigename">
+        <input v-model="form.phoneNumber" type="tel" placeholder="Telefonnummer">
+        <button @click="doRegister">Registrieren</button>
+        <p class="auth-switch"><span @click="isLogin = true">Schon ein Konto? Zum Login</span></p>
       </div>
+
+      <!-- Passwort-Reset Dialog -->
+      <div v-if="showReset" class="alert-overlay" @click="showReset = false">
+        <div class="alert-window" @click.stop>
+          <div class="alert-header"><h3>Passwort zurücksetzen</h3></div>
+          <div class="alert-content">
+            <p>Gib deine E-Mail ein. Du erhältst einen Link zum Zurücksetzen.</p>
+            <input type="email" v-model="resetEmail" placeholder="E-Mail" />
+            <div style="display:flex; gap:10px; margin-top:12px;">
+              <button class="btn-close-alert" @click="showReset = false">Abbrechen</button>
+              <button class="btn-save" @click="doPasswordReset">Link senden</button>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <footer class="footer-banner">
+        <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
+      </footer>
     </div>
 
+    <!-- ============================ App (nach Login) ============================ -->
     <div v-if="user.loggedIn" class="app-container">
       <header class="app-header">
         <div class="burger-menu" @click="toggleMenu">
           <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
         </div>
         <h2>CannaTrack</h2>
+
         <div class="header-actions">
-          <div class="settings-icon" @click="toggleSettings">
+          <div class="settings-icon" @click="toggleSettings" title="Einstellungen">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
           </div>
-            <!-- nur die Glocke toggelt -->
-            <div class="notification-bell" class="bell-btn" @click.stop="toggleNotifications" aria-label="Benachrichtigungen">
-              <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
-                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
-                <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
-              </svg>
-              <span v-if="unreadNotificationsCount > 0" class="notification-badge">
-                {{ unreadNotificationsCount }}
-              </span>
-            </button>
+
+          <!-- Benachrichtigungen -->
+          <div class="notification-bell bell-btn" @click.stop="toggleNotifications" aria-label="Benachrichtigungen" title="Benachrichtigungen">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <span v-if="unreadNotificationsCount > 0" class="notification-badge">{{ unreadNotificationsCount }}</span>
 
             <div v-if="showNotifications" class="notifications-dropdown" @click.stop>
-              <div v-if="notifications.length === 0" class="notification-item">
-                Keine Benachrichtigungen.
-              </div>
-
-              <div v-for="noti in notifications"
-                  :key="noti.id"
-                  class="notification-item"
-                  :class="{ read: noti.read }"
-                  @click="handleNotificationClick(noti)">
+              <div v-if="notifications.length === 0" class="notification-item">Keine Benachrichtigungen.</div>
+              <div v-for="noti in notifications" :key="noti.id"
+                   class="notification-item" :class="{ read: noti.read }"
+                   @click="handleNotificationClick(noti)">
                 <p>{{ noti.message }}</p>
                 <small>{{ formatTimestamp(noti.timestamp) }}</small>
-
-                <button v-if="!noti.read"
-                        class="mark-read"
-                        @click.stop="markNotificationAsRead(noti)">
-                  Gelesen
-                </button>
+                <button v-if="!noti.read" class="mark-read" @click.stop="markNotificationAsRead(noti)">Gelesen</button>
               </div>
             </div>
           </div>
+
           <p>{{ userData.displayName || user.email }}</p>
-          <button @click="doLogout">Logout</button>
         </div>
       </header>
 
+      <!-- Sidebar -->
       <div v-if="showMenu" class="sidebar-overlay" @click="toggleMenu">
         <div class="sidebar-menu" @click.stop>
           <h3>Menü</h3>
@@ -130,7 +132,7 @@
           <a @click="setView('friends')">Freunde & Soziales</a>
           <a @click="setView('events')">Events</a>
           <a @click="setView('statistics')">Statistik</a>
-          <a @click="setView('thcCalculator')">THC Restgehalt Rechner</a>
+          <a @click="setView('thcCalculator')">THC Rechner</a>
           <a @click="setView('myData')">Meine Daten</a>
           <hr>
           <a @click="setView('privacy')">Datenschutz</a>
@@ -140,27 +142,40 @@
         </div>
       </div>
 
+      <!-- ============================ Main Content ============================ -->
       <main class="main-content">
+
         <!-- Dashboard -->
         <div v-if="currentView === 'dashboard'">
           <div class="tracker-container card">
             <h3>Neuen Konsum loggen</h3>
+
             <div class="selection">
-              <div v-for="item in products" :key="item.name" @click="selection.product = item.name" :class="{ selected: selection.product === item.name }">
+              <div v-for="item in products" :key="item.name"
+                   @click="selection.product = item.name"
+                   :class="{ selected: selection.product === item.name }">
                 <img :src="item.img" :alt="item.name">
                 <p>{{ item.name }}</p>
               </div>
             </div>
+
             <div class="selection">
-              <div v-for="device in devices" :key="device" @click="selection.device = device" :class="{ selected: selection.device === device }">
+              <div v-for="device in devices" :key="device"
+                   @click="selection.device = device"
+                   :class="{ selected: selection.device === device }">
                 <p>{{ device }}</p>
               </div>
             </div>
-            <button @click="logConsumption" :disabled="!selection.product || !selection.device">Bestätigen & Standort loggen</button>
+
+            <button @click="logConsumption" :disabled="!selection.product || !selection.device">
+              Bestätigen & Standort loggen
+            </button>
           </div>
+
           <div class="dashboard-banner">
             <img :src="dashboardBanners[dashboardBannerIndex].img" :alt="dashboardBanners[dashboardBannerIndex].alt">
           </div>
+
           <div class="map-container card">
             <div class="map-header">
               <h3>Konsum-Karte</h3>
@@ -182,7 +197,7 @@
           <div class="user-id-section">
             <p>Dein Freundschaftscode:</p>
             <strong>{{ user.uid }}</strong>
-            <button class="btn-share" @click="shareProfile">Code Teilen</button>
+            <button class="btn-share" @click="shareProfile">Code teilen</button>
           </div>
           <hr>
           <h4>Freund hinzufügen</h4>
@@ -194,7 +209,7 @@
           <h4>Offene Anfragen</h4>
           <button @click="actionFetchFriendRequests" class="btn-refresh-requests">Anfragen aktualisieren</button>
 
-          <div v-if="friendRequests.length === 0" class="empty-state">Klicke auf "Aktualisieren", um nach neuen Anfragen zu suchen.</div>
+          <div v-if="friendRequests.length === 0" class="empty-state">Klicke auf „Aktualisieren“, um nach neuen Anfragen zu suchen.</div>
           <div v-for="req in friendRequests" :key="req.id" class="request">
             <span>{{ req.fromDisplayName || req.fromEmail }}</span>
             <div class="request-buttons">
@@ -207,19 +222,19 @@
           <div v-if="friends.length === 0" class="empty-state">Noch keine Freunde hinzugefügt.</div>
           <div v-for="friend in friends" :key="friend.id" class="friend-item">
             <fieldset>
-            <div class="friend-main" @click="openChat(friend)">
-              <p>{{ friend.username || friend.displayName || friend.label || friend.id }}</p>
-              <span>Chat öffnen</span>
-            </div>
-            <h5>User Aktionen</h5>
-            <div class="friend-actions">
-              <button class="btn-danger" @click.stop="removeFriendB(friend)">Entfernen</button>
-              <button class="btn-ghost" @click.stop="blockFriendB(friend)">Blockieren</button>
-            </div>
+              <div class="friend-main" @click="openChat(friend)">
+                <p>{{ friend.username || friend.displayName || friend.label || friend.id }}</p>
+                <span>Chat öffnen</span>
+              </div>
+              <h5>User Aktionen</h5>
+              <div class="friend-actions">
+                <button class="btn-danger" @click.stop="removeFriendB(friend)">Entfernen</button>
+                <button class="btn-ghost" @click.stop="blockFriendB(friend)">Blockieren</button>
+              </div>
             </fieldset>
           </div>
         </div>
-        
+
         <!-- Events -->
         <div v-if="currentView === 'events'" class="events-page card">
           <h3>Community Events</h3>
@@ -250,7 +265,7 @@
         <div v-if="currentView === 'statistics'" class="stats-container card">
           <div class="stats-header">
             <h3>Wochenübersicht</h3>
-            <div class="refresh-icon" @click="refreshStats">
+            <div class="refresh-icon" @click="refreshStats" title="Aktualisieren">
               <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
             </div>
           </div>
@@ -312,29 +327,28 @@
             <div v-if="thcCalc.result.status === 'red'" class="result-box result-box-red">
               <h4>Nicht Fahrtüchtig</h4>
               <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
-              <p>Du solltest das Führen von Fahrzeugen unbedingt vermeiden. Warte noch ca. <strong>{{ thcCalc.result.waitTime }}</strong>, um unter den Grenzwert zu fallen.</p>
+              <p>Warte noch ca. <strong>{{ thcCalc.result.waitTime }}</strong>, um unter den Grenzwert zu fallen.</p>
             </div>
             <div v-if="thcCalc.result.status === 'orange'" class="result-box result-box-orange">
               <h4>Eingeschränkt Fahrtüchtig</h4>
               <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
-              <p>Dein Wert liegt in einem kritischen Bereich. Auch wenn er unter dem Grenzwert liegt, kann deine Reaktionsfähigkeit noch beeinträchtigt sein. Sei vorsichtig.</p>
+              <p>Achte auf dein Empfinden; Reaktionsfähigkeit kann eingeschränkt sein.</p>
             </div>
             <div v-if="thcCalc.result.status === 'green'" class="result-box result-box-green">
               <h4>Fahrtüchtig</h4>
               <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
-              <p>Dein geschätzter Wert liegt in einem Bereich, der als unbedenklich für die Fahrtüchtigkeit angesehen wird. Fahre trotzdem nur, wenn du dich absolut fit fühlst.</p>
             </div>
           </div>
 
           <div class="warning-text">
-            <p><strong>Haftungsausschluss:</strong> Die hier angezeigten Ergebnisse sind lediglich Schätzungen und basieren auf vereinfachten Modellen. Der tatsächliche Abbau von THC ist von zahlreichen individuellen Faktoren wie Stoffwechsel, Körpergewicht und Konsumhäufigkeit abhängig. Diese Berechnung ist nicht rechtsverbindlich und sollte nicht zur Beurteilung der Fahrtüchtigkeit oder für medizinische Zwecke verwendet werden.</p>
+            <p><strong>Haftungsausschluss:</strong> Schätzung, keine Rechts- oder Medizinauskunft.</p>
           </div>
           <div class="footer-banner">
             <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
           </div>
         </div>
 
-        <!-- My Data -->
+        <!-- Meine Daten -->
         <div v-if="currentView === 'myData'" class="my-data-container card">
           <h3>Meine Daten & Personalisierung</h3>
           <div class="setting-item">
@@ -357,7 +371,7 @@
           <button @click="saveUserData" class="btn-save">Änderungen speichern</button>
         </div>
 
-        <!-- Static pages -->
+        <!-- Statische Seiten -->
         <div v-if="currentView === 'privacy'" class="placeholder-card card">
           <h3>Datenschutz</h3>
           <p>Hier werden bald die Datenschutzbestimmungen stehen.</p>
@@ -369,95 +383,63 @@
       </main>
     </div>
 
-<!-- Chat Overlay -->
-      <div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
-        <div class="chat-window" @click.stop>
-          <div class="chat-header">
-            <h3>
-              Chat mit
-              {{ activeChat.partner.username
-                || activeChat.partner.displayName
-                || activeChat.partner.label
-                || activeChat.partner.email
-                || activeChat.partner.id }}
-            </h3>
-            <button @click="closeChat" class="btn-close-chat">&times;</button>
-          </div>
-
-          <!-- WICHTIG: ID für Auto-Scroll -->
-          <div id="chatMessages" ref="chatMessages" class="chat-messages">
-            <div
-              v-for="m in activeChat.messages"
-              :key="m.id"
-              class="message-bubble"
-              :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }"
-            >
-              <p>{{ m.text }}</p>
-            </div>
-          </div>
-
-          <!-- Chat Input Bar -->
-          <div class="chat-input">
-            <input
-              type="text"
-              v-model="chatMessageInput"
-              @keyup.enter.exact="sendMessage"
-              placeholder="Nachricht schreiben…"
-              ref="chatInput"
-            />
-
-            <button
-              :disabled="!chatMessageInput?.trim()"
-              @click="sendMessage"
-              aria-label="Senden"
-              title="Senden"
-            >
-              <!-- Papierflieger-Icon -->
-              <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
-                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <path d="M22 2L11 13"></path>
-                <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
-              </svg>
-            </button>
+    <!-- Chat Overlay -->
+    <div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
+      <div class="chat-window" @click.stop>
+        <div class="chat-header">
+          <h3>
+            Chat mit
+            {{ activeChat.partner.username || activeChat.partner.displayName || activeChat.partner.label || activeChat.partner.email || activeChat.partner.id }}
+          </h3>
+          <button @click="closeChat" class="btn-close-chat">&times;</button>
+        </div>
+        <div id="chatMessages" ref="chatMessages" class="chat-messages">
+          <div v-for="m in activeChat.messages" :key="m.id"
+               class="message-bubble"
+               :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
+            <p>{{ m.text }}</p>
           </div>
         </div>
-      </div>
-
-        <!-- Settings Overlay -->
-        <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
-          <div class="settings-window" @click.stop>
-            <div class="settings-header">
-              <h3>Einstellungen</h3>
-              <button @click="toggleSettings" class="btn-close-settings">&times;</button>
-            </div>
-            <div class="settings-content">
-              <div class="setting-item">
-                <label for="daily-limit">Tägliches Konsumlimit</label>
-                <input type="number" id="daily-limit" v-model.number="settings.consumptionThreshold" min="1">
-              </div>
-              <button @click="saveUserSettings" class="btn-save">Speichern</button>
-            </div>
-          </div>
-        </div>
-
-        <!-- Alert -->
-        <div v-if="showAlert" class="alert-overlay">
-          <div class="alert-window" @click.stop>
-            <div class="alert-header">
-              <h3>Warnung</h3>
-            </div>
-            <div class="alert-content">
-              <p>{{ alertMessage }}</p>
-              <button @click="closeAlert" class="btn-close-alert">Schließen</button>
-            </div>
-          </div>
+        <div class="chat-input">
+          <input type="text" v-model="chatMessageInput" @keyup.enter.exact="sendMessage" placeholder="Nachricht…" ref="chatInput" />
+          <button :disabled="!chatMessageInput?.trim()" @click="sendMessage" aria-label="Senden" title="Senden">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2l-7 20-4-9-9-4 20-7z"></path></svg>
+          </button>
         </div>
       </div>
     </div>
-    
-  </div>
-  <!-- App Code -->
+
+    <!-- Settings Overlay -->
+    <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
+      <div class="settings-window" @click.stop>
+        <div class="settings-header">
+          <h3>Einstellungen</h3>
+          <button @click="toggleSettings" class="btn-close-settings">&times;</button>
+        </div>
+        <div class="settings-content">
+          <div class="setting-item">
+            <label for="daily-limit">Tägliches Konsumlimit</label>
+            <input type="number" id="daily-limit" v-model.number="settings.consumptionThreshold" min="1">
+          </div>
+          <button @click="saveUserSettings" class="btn-save">Speichern</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alert -->
+    <div v-if="showAlert" class="alert-overlay">
+      <div class="alert-window" @click.stop>
+        <div class="alert-header"><h3>Warnung</h3></div>
+        <div class="alert-content">
+          <p>{{ alertMessage }}</p>
+          <button @click="closeAlert" class="btn-close-alert">Schließen</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /#app -->
+
+  <!-- App Script -->
   <script type="module" src="./js/app.js"></script>
 </body>
 </html>

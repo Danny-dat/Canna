@@ -1,4 +1,10 @@
-import { onAuth, register, login, logout } from "./services/auth.service.js";
+import {
+  onAuth,
+  register,
+  login,
+  logout,
+  resetPassword,
+} from "./services/auth.service.js";
 import {
   loadUserData,
   saveUserData,
@@ -131,7 +137,8 @@ const app = Vue.createApp({
       ],
       devices: ["Joint", "Bong", "Vaporizer", "Pfeife"],
       selection: { product: null, device: null },
-
+      showReset: false,
+      resetEmail: "",
       friends: [],
       friendRequests: [],
       notifications: [],
@@ -831,6 +838,22 @@ const app = Vue.createApp({
         this.dashboardBannerIndex =
           (this.dashboardBannerIndex + 1) % this.dashboardBanners.length;
       }, 5000);
+    },
+    resetPasswordFlow() {
+      // öffnet den Dialog und prefills mit der Login-Mail (falls vorhanden)
+      this.resetEmail = this.form?.email || "";
+      this.showReset = true;
+    },
+
+    async doPasswordReset() {
+      try {
+        await resetPassword(this.resetEmail || this.form.email);
+        this.showReset = false;
+        this.resetEmail = "";
+        alert("Wenn die E-Mail existiert, wurde ein Reset-Link gesendet.");
+      } catch (e) {
+        alert(e?.message || "Konnte Reset-Link nicht senden.");
+      }
     },
   },
 });
