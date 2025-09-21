@@ -11,7 +11,8 @@
   <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
 
   <!-- Vue 3 -->
-  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <!-- <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script> -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
   <!-- Firebase 9 compat (v8 API) -->
   <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
   <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
@@ -197,7 +198,18 @@
           <div class="user-id-section">
             <p>Dein Freundschaftscode:</p>
             <strong>{{ user.uid }}</strong>
-            <button class="btn-share" @click="shareProfile">Code teilen</button>
+
+            <!-- share menu -->
+            <div class="btn-share-wrap" ref="shareWrap" style="position:relative; display:inline-block;">
+              <button class="btn-share" @click.stop="openShareMenu">Code teilen</button>
+
+              <div v-if="shareMenuOpen" class="share-menu" @click.stop
+                  style="position:absolute; z-index:20; right:0; top:110%; min-width:180px;">
+                <button class="share-item" @click="shareCopy">📋 Kopieren</button>
+                <button class="share-item" @click="shareNative">📤 Teilen…</button>
+                <button class="share-item" @click="shareQR">🔳 QR anzeigen</button>
+              </div>
+            </div>
           </div>
           <hr>
           <h4>Freund hinzufügen</h4>

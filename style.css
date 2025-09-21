@@ -170,6 +170,9 @@ h3, h4 { border-bottom: 1px solid var(--border-color); padding-bottom: 10px; mar
 .refresh-icon { cursor: pointer; color: var(--text-muted-color); transition: color 0.2s, transform 0.5s; }
 .refresh-icon:hover { color: var(--primary-color); transform: rotate(180deg); }
 #map { height: 350px; border-radius: var(--border-radius); margin-top: 15px; }
+.share-menu{background:var(--card-bg,#fff);border:1px solid rgba(0,0,0,.1);border-radius:8px;box-shadow:0 6px 22px rgba(0,0,0,.12);padding:6px}
+.share-item{display:block;width:100%;text-align:left;padding:8px 10px;border:0;background:transparent;cursor:pointer;border-radius:6px}
+.share-item:hover{background:rgba(0,0,0,.06)}
 
 /* =============================================================== */
 /* EVENTS (NEU)                                                    */

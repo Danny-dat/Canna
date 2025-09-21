@@ -1,22 +1,27 @@
 import { db } from '../services/firebase-config.js';
 
 export async function playSoundAndVibrate() {
-  try {
-    // Warten, falls AudioContext noch nicht gestartet
-    if (window.__audioReady) await window.__audioReady();
+  // 1) Auf Lazy-Init warten (kommt aus index.html)
+  const ok = await (window.__audioReady || Promise.resolve(false));
+  if (!ok) return; // keine Töne ohne Gestik
 
-    // Beispiel: kurzer Beep über Tone.js
-    if (window.Tone) {
-      const synth = new Tone.Synth().toDestination();
-      await Tone.loaded();             // Samples/Nodes geladen
-      synth.triggerAttackRelease("C5", "8n");
+  try {
+    // 2) Falls der Context noch "suspended" ist: starten
+    if (window.Tone?.getContext()?.rawContext?.state === 'suspended') {
+      await window.Tone.start();
     }
 
-    // Vibrations-Feedback (falls unterstützt)
-    if (navigator.vibrate) navigator.vibrate(80);
+    // 3) Kleines "ding" abspielen
+    const synth = new window.Tone.Synth().toDestination();
+    await window.Tone.now();              // Zeitbasis holen
+    synth.triggerAttackRelease('C6', '8n');
+
   } catch (e) {
-    console.warn("Audio/Vibrate failed:", e);
+    console.warn('[notify] Audio blocked:', e);
   }
+
+  // 4) Vibration (falls erlaubt/verfügbar)
+  try { navigator.vibrate && navigator.vibrate(120); } catch {}
 }
 
 export async function notifyFriendsIfReachedLimit(uid, displayNameOrEmail, threshold) {

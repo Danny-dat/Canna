@@ -1,3 +1,4 @@
+// services/firebase-config.js
 const firebaseConfig = {
   apiKey: "AIzaSyCWLDRA3lOLWzf8unvKKOmhDZ1THyrGyTQ",
   authDomain: "cannatrack-2486f.firebaseapp.com",
@@ -7,21 +8,31 @@ const firebaseConfig = {
   appId: "1:873798957273:web:fe161382aa2d1b24d226c8"
 };
 
-// Init
-if (!window.firebase.apps || !window.firebase.apps.length) {
-  window.firebase.initializeApp(firebaseConfig);
+// App einmalig initialisieren
+const app = (firebase.apps && firebase.apps.length)
+  ? firebase.app()
+  : firebase.initializeApp(firebaseConfig);
+
+// Firestore holen
+const db = firebase.firestore();
+
+// Settings NUR setzen, solange noch nicht "frozen"
+const isFrozen = !!(db._settingsFrozen || db._delegate?._settingsFrozen);
+if (!isFrozen && !window.__CT_FS_SETTINGS_DONE__) {
+  try {
+    db.settings({
+      experimentalAutoDetectLongPolling: true,
+      useFetchStreams: false,
+      // experimentalForceLongPolling: true, // nur falls nötig
+    });
+  } catch (e) {
+    // still & chill: wenn zu spät, einfach überspringen
+    console.warn("[firestore] settings() skipped:", e?.message);
+  }
+  window.__CT_FS_SETTINGS_DONE__ = true;
 }
 
-// ⬇️ WICHTIG: Firestore-Einstellungen VOR dem ersten Firestore-Zugriff setzen
-window.firebase.firestore().settings({
-  experimentalAutoDetectLongPolling: true, // erkennt geblockte Umgebungen
-  useFetchStreams: false,                   // konservativ (hilft bei Proxys/Adblock)
-  // experimentalForceLongPolling: true,    // falls es trotzdem geblockt wird -> aktivieren
-});
-
-// Erst JETZT Referenzen holen
-const auth = window.firebase.auth();
-const db = window.firebase.firestore();
-const FieldValue = window.firebase.firestore.FieldValue;
+const auth = firebase.auth();
+const FieldValue = firebase.firestore.FieldValue;
 
 export { auth, db, FieldValue };

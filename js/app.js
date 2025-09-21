@@ -24,7 +24,10 @@ import {
   updatePublicProfile,
 } from "./services/profile.service.js";
 
-import { shareMyFriendCode } from "./services/friends.service.js";
+import {
+  shareMyFriendCode,
+  copyToClipboard,
+} from "./services/friends.service.js";
 
 import { initFriendsFeature } from "./features/friends.js";
 import { initEventsFeature, voteEvent } from "./features/events.js";
@@ -52,6 +55,7 @@ const app = createApp({
       showAlert: false,
       alertMessage: "",
       bannerInterval: null,
+      shareMenuOpen: false,
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
@@ -168,6 +172,13 @@ const app = createApp({
 
     document.addEventListener("click", this._onDocClick);
     document.addEventListener("keydown", this._onKeyDown);
+
+    this._onShareOutside = (e) => {
+      if (!this.shareMenuOpen) return;
+      const btn = document.querySelector(".btn-share-wrap");
+      if (btn && !btn.contains(e.target)) this.shareMenuOpen = false;
+    };
+    document.addEventListener("click", this._onShareOutside);
   },
 
   methods: {
@@ -413,18 +424,53 @@ const app = createApp({
     },
 
     // ---------------- Friends / Share ----------------
-    async shareProfile() {
+    openShareMenu() {
+      this.shareMenuOpen = !this.shareMenuOpen;
+    },
+    closeShareMenu() {
+      this.shareMenuOpen = false;
+    },
+
+    async shareCopy() {
+      const code = this.user?.uid || "";
+      if (!code) return alert("Kein Nutzer angemeldet.");
+      const ok = await copyToClipboard(code);
+      if (ok) {
+        this.alertMessage = "Freundschaftscode kopiert!";
+        this.showAlert = true;
+      }
+      this.closeShareMenu();
+    },
+    async shareNative() {
       try {
-        const res = await shareMyFriendCode(this.user?.uid);
-        if (res?.method === "clipboard" || res?.method === "execCommand") {
-          this.alertMessage = "Freundschaftscode kopiert!";
-          this.showAlert = true;
-        }
-        // Bei navigator.share gibt's kein Alert, da das OS den Share-Sheet zeigt.
+        await shareMyFriendCode(this.user?.uid);
       } catch (e) {
         this.alertMessage = e?.message || "Teilen fehlgeschlagen.";
         this.showAlert = true;
       }
+      this.closeShareMenu();
+    },
+    // optional QR (falls du magst)
+    async shareQR() {
+      try {
+        const code = this.user?.uid || "";
+        const div = document.createElement("div");
+        await QRCode.toCanvas(
+          code,
+          { width: 180, margin: 0 },
+          (err, canvas) => {
+            if (!err) div.appendChild(canvas);
+          }
+        );
+        // sehr simpel: altes Alert-Fenster wiederverwenden
+        this.alertMessage = "Dein QR-Code (Freundschaftscode):";
+        this.showAlert = true;
+        // kleines Timeout: Canvas nach dem Öffnen in den Alert einsetzen
+        setTimeout(() => {
+          document.querySelector(".alert-content")?.appendChild(div);
+        }, 0);
+      } catch {}
+      this.closeShareMenu();
     },
 
     // ---------------- THC ----------------
