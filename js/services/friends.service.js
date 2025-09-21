@@ -1,20 +1,65 @@
 // services/friends.service.js
 import { db, FieldValue } from "./firebase-config.js";
 
-/* Helpers */
+/* Timestamp helper */
 const TS = () =>
   (FieldValue && FieldValue.serverTimestamp && FieldValue.serverTimestamp()) ||
   new Date();
 
-const samePair = (a, b) =>
-  (a.fromUid === b.fromUid && a.toUid === b.toUid) ||
-  (a.fromUid === b.toUid && a.toUid === b.fromUid);
+/* -----------------------------------------------------------
+ * interne Helper
+ * ---------------------------------------------------------*/
+
+/**
+ * Lädt das friend_request-Dokument und schreibt
+ * ein vollständiges Objekt zurück (Rules verlangen:
+ * fromUid, toUid, participants bleiben unverändert)
+ * und keys().hasOnly([...]) für:
+ * ['fromUid','toUid','participants','status','createdAt','respondedAt']
+ */
+async function safeUpdateRequestFull(docId, patch) {
+  const ref = db.collection("friend_requests").doc(docId);
+  const snap = await ref.get();
+  if (!snap.exists) throw new Error("Request existiert nicht mehr.");
+
+  const cur = snap.data();
+
+  // ! Regeln-konform NUR die erlaubten Keys schreiben:
+  const full = {
+    fromUid: cur.fromUid,
+    toUid: cur.toUid,
+    participants: cur.participants,
+    createdAt: cur.createdAt ?? TS(),
+    status: cur.status,
+    respondedAt: cur.respondedAt ?? null,
+    // Patch (nur status/respondedAt überschreiben)
+    ...pickAllowed(patch, ["status", "respondedAt"]),
+  };
+
+  await ref.set(full, { merge: false });
+  return { ref, cur, full };
+}
+
+/** minimales Utility: nur erlaubte Keys aus patch übernehmen */
+function pickAllowed(obj, allowed) {
+  const out = {};
+  if (!obj) return out;
+  for (const k of allowed) {
+    if (Object.prototype.hasOwnProperty.call(obj, k)) out[k] = obj[k];
+  }
+  return out;
+}
+
+/* -----------------------------------------------------------
+ * Öffentliche API
+ * ---------------------------------------------------------*/
 
 /* Anfrage senden + Noti */
 export async function sendFriendRequest({ fromUid, fromEmail, fromDisplayName, toUid }) {
   if (!fromUid || !toUid) throw new Error("UID fehlt.");
   if (fromUid === toUid) throw new Error("Du kannst dich nicht selbst hinzufügen.");
 
+  // Duplikate (pending) vermeiden
   const [q1, q2] = await Promise.all([
     db.collection("friend_requests")
       .where("fromUid","==",fromUid).where("toUid","==",toUid)
@@ -27,7 +72,7 @@ export async function sendFriendRequest({ fromUid, fromEmail, fromDisplayName, t
 
   const reqRef = await db.collection("friend_requests").add({
     fromUid,
-    fromEmail: fromEmail ?? null,
+    fromEmail: fromEmail ?? null,          // create erlaubt weitere Felder
     fromDisplayName: fromDisplayName ?? null,
     toUid,
     status: "pending",
@@ -93,8 +138,6 @@ export function listenForFriends(myUid, cb) {
           username: pub.username ?? null,
           photoURL: pub.photoURL ?? null,
           lastLocation: pub.lastLocation ?? null,
-          // für dein UI:
-          private: { email: pub.email ?? null } // (nur wenn du’s dort ablegst)
         };
       });
 
@@ -107,8 +150,10 @@ export async function acceptRequest(myUid, request) {
   if (!request?.id) throw new Error("Request-ID fehlt.");
   if (request.toUid !== myUid) throw new Error("Nur der Empfänger darf annehmen.");
 
-  const reqRef = db.collection("friend_requests").doc(request.id);
-  await reqRef.update({ status:"accepted", respondedAt: TS() });
+  await safeUpdateRequestFull(request.id, {
+    status: "accepted",
+    respondedAt: TS(),
+  });
 
   await db.collection("notifications").add({
     type: "friend_request_accepted",
@@ -125,20 +170,18 @@ export async function acceptRequest(myUid, request) {
 export async function declineRequest(myUid, requestOrId) {
   const id = typeof requestOrId === "string" ? requestOrId : requestOrId?.id;
   if (!id) throw new Error("Request-ID fehlt.");
-  const ref = db.collection("friend_requests").doc(id);
-  const snap = await ref.get();
-  if (!snap.exists) throw new Error("Anfrage existiert nicht mehr.");
-  const data = snap.data();
-  if (data.toUid !== myUid) throw new Error("Nur der Empfänger darf ablehnen.");
 
-  await ref.update({ status:"declined", respondedAt: TS() });
+  const { cur } = await safeUpdateRequestFull(id, {
+    status: "declined",
+    respondedAt: TS(),
+  });
 
   // optional: Info an Absender
   try {
     await db.collection("notifications").add({
       type: "friend_request_declined",
       requestId: id,
-      recipientId: data.fromUid,
+      recipientId: cur.fromUid,
       senderId: myUid,
       message: `Deine Freundschaftsanfrage wurde abgelehnt.`,
       read: false,
@@ -147,11 +190,10 @@ export async function declineRequest(myUid, requestOrId) {
   } catch {}
 }
 
-/* >>> Freund entfernen (Modell B): Status -> 'removed' */
+/* Freund entfernen (Modell: status -> 'removed') */
 export async function removeFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  // 1 Query (array-contains) + Filter → kein Composite-Index nötig
   const snap = await db.collection("friend_requests")
     .where("participants","array-contains", myUid).get();
 
@@ -165,9 +207,8 @@ export async function removeFriend(myUid, friendUid) {
 
   if (!doc) throw new Error("Keine bestehende Freundschaft gefunden.");
 
-  await doc.ref.update({
+  await safeUpdateRequestFull(doc.id, {
     status: "removed",
-    removedBy: myUid,
     respondedAt: TS(),
   });
 
@@ -185,8 +226,10 @@ export async function removeFriend(myUid, friendUid) {
   } catch {}
 }
 
-/* Optional: blocken / entblocken (nur Status wechseln) */
+/* blocken (status -> 'blocked') */
 export async function blockFriend(myUid, friendUid) {
+  if (!myUid || !friendUid) throw new Error("UID fehlt.");
+
   const snap = await db.collection("friend_requests")
     .where("participants","array-contains", myUid).get();
 
@@ -197,10 +240,16 @@ export async function blockFriend(myUid, friendUid) {
   });
   if (!doc) throw new Error("Kein Beziehungs-Dokument gefunden.");
 
-  await doc.ref.update({ status:"blocked", blockedBy: myUid, respondedAt: TS() });
+  await safeUpdateRequestFull(doc.id, {
+    status: "blocked",
+    respondedAt: TS(),
+  });
 }
 
+/* entblocken → auf 'removed' setzen (keine Freundschaft) */
 export async function unblockFriend(myUid, friendUid) {
+  if (!myUid || !friendUid) throw new Error("UID fehlt.");
+
   const snap = await db.collection("friend_requests")
     .where("participants","array-contains", myUid).get();
 
@@ -213,11 +262,13 @@ export async function unblockFriend(myUid, friendUid) {
   });
   if (!doc) throw new Error("Kein blockiertes Dokument gefunden.");
 
-  // nach unblock ist es KEINE Freundschaft → wieder 'pending' wäre Einladung nötig
-  await doc.ref.update({ status:"removed", respondedAt: TS() });
+  await safeUpdateRequestFull(doc.id, {
+    status: "removed",
+    respondedAt: TS(),
+  });
 }
 
-/* Für Modell B: No-Op (nur falls du es irgendwo aufrufst) */
+/* Für dein Modell B: aktuell nichts zu tun */
 export async function syncFriendshipsOnLogin() {
   return;
 }
