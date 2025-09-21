@@ -395,8 +395,97 @@
         <!-- Admin Bereich -->
         <div v-if="currentView === 'admin' && isAdmin" class="admin-container card">
           <h3>Admin Bereich</h3>
-          <p>Nur für Admins sichtbar.</p>
-        </div>
+            <p>Verwaltung von Events, Nutzern, Bannern und Statistiken</p>
+            
+            <!-- Tabs -->
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <button @click="admin.tab='events'"  :class="{active: admin.tab==='events'}">Events</button>
+              <button @click="admin.tab='users'"   :class="{active: admin.tab==='users'}">Nutzer</button>
+              <button @click="admin.tab='banners'" :class="{active: admin.tab==='banners'}">Werbung</button>
+              <button @click="admin.tab='stats'"   :class="{active: admin.tab==='stats'}">Statistik</button>
+            </div>
+
+            <!-- Events -->
+            <div v-if="admin.tab==='events'">
+              <h4>Events verwalten</h4>
+              <div style="display:grid; gap:8px; grid-template-columns: 1fr 1fr;">
+                <input v-model="adminEventForm.name" placeholder="Name">
+                <input v-model="adminEventForm.address" placeholder="Adresse">
+                <input v-model.number="adminEventForm.lat" type="number" step="0.0001" placeholder="Lat">
+                <input v-model.number="adminEventForm.lng" type="number" step="0.0001" placeholder="Lng">
+                <button @click="adminCreateEvent">Event anlegen</button>
+              </div>
+              <hr>
+              <div v-for="e in admin.events" :key="e.id" class="event-item">
+                <div>
+                  <p class="event-name">{{ e.name }}</p>
+                  <p class="event-address">{{ e.address }}</p>
+                  <small>Votes: 👍 {{ e.upvotes?.length||0 }} / 👎 {{ e.downvotes?.length||0 }}</small>
+                </div>
+                <div class="event-actions">
+                  <button @click="adminDeleteEvent(e)">Löschen</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Users -->
+            <div v-if="admin.tab==='users'">
+              <h4>Nutzer (öffentliches Profil)</h4>
+              <div v-for="u in admin.users" :key="u.id" style="display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border-color); padding:6px 0;">
+                <div style="flex:1;">
+                  <strong>{{ u.displayName || u.username || u.id }}</strong>
+                  <div style="font-size:12px; color:var(--text-muted-color);">ID: {{ u.id }}</div>
+                </div>
+                <input v-model="u.displayName" placeholder="Display Name" style="max-width:200px;">
+                <button @click="adminSaveUser(u)">Speichern</button>
+              </div>
+            </div>
+
+            <!-- Banners -->
+            <div v-if="admin.tab==='banners'">
+              <h4>Werbebanner</h4>
+              <div style="display:grid; gap:8px; grid-template-columns: repeat(5, 1fr); align-items:center;">
+                <input v-model="bannerForm.slot" placeholder="slot (landing|dashboard)">
+                <input v-model="bannerForm.imageUrl" placeholder="imageUrl">
+                <input v-model="bannerForm.alt" placeholder="alt">
+                <input v-model.number="bannerForm.order" type="number" placeholder="order">
+                <button @click="adminCreateBanner">Banner anlegen</button>
+              </div>
+              <hr>
+              <div v-for="b in admin.banners" :key="b.id" style="display:flex; gap:10px; align-items:center; border-bottom:1px solid var(--border-color); padding:6px 0;">
+                <img :src="b.imageUrl" alt="" style="width:80px; height:40px; object-fit:cover; border-radius:6px;">
+                <div style="flex:1;">
+                  <div><strong>{{ b.slot }}</strong> · Order: {{ b.order }}</div>
+                  <div style="font-size:12px; color:var(--text-muted-color);">{{ b.alt }}</div>
+                </div>
+                <button @click="adminDeleteBanner(b)">Löschen</button>
+              </div>
+            </div>
+
+            <!-- Stats -->
+            <div v-if="admin.tab==='stats'">
+              <h4>Anonyme Statistik (global)</h4>
+              <p>Gesamt Einträge: <strong>{{ admin.aggregates.total }}</strong></p>
+
+              <h5>Nach Produkt</h5>
+              <ul>
+                <li v-for="p in admin.aggregates.byProduct" :key="p.id">{{ p.id }}: {{ p.count }}</li>
+              </ul>
+
+              <h5>Nach Gerät</h5>
+              <ul>
+                <li v-for="d in admin.aggregates.byDevice" :key="d.id">{{ d.id }}: {{ d.count }}</li>
+              </ul>
+
+              <h5>Produkt × Gerät</h5>
+              <ul>
+                <li v-for="pd in admin.aggregates.byPair" :key="pd.id">{{ pd.id }}: {{ pd.count }}</li>
+              </ul>
+
+              <button @click="adminRefreshAggregates">Aktualisieren</button>
+              <button @click="adminExportAggregatesCsv">Als CSV exportieren</button>
+            </div>
+          </div>
 
         <!-- Meine Daten -->
         <div v-if="currentView === 'myData'" class="my-data-container card">

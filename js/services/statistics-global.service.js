@@ -1,3 +1,4 @@
+// Global statistics service (for admin dashboard)
 export async function loadGlobalAggregates(){
   const root = db.collection('aggregates').doc('consumption');
   const [pSnap, dSnap, pdSnap, rootSnap] = await Promise.all([

@@ -29,6 +29,8 @@ import {
   copyToClipboard,
 } from "./services/friends.service.js";
 
+import { adminMixin } from "./features/admin.mixin.js";
+
 import { initFriendsFeature, friendsActions } from "./features/friends.js";
 import { initEventsFeature, voteEvent } from "./features/events.js";
 import {
@@ -45,6 +47,7 @@ import { db } from "./services/firebase-config.js"; // für handleNotificationCl
 
 // ---- App ----
 const app = createApp({
+  mixins: [adminMixin],
   data() {
     return {
       // UI Shell
@@ -66,7 +69,6 @@ const app = createApp({
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
-      isAdmin: false,
       form: { email: "", password: "", phoneNumber: "", displayName: "" },
       userData: { displayName: "", phoneNumber: "", theme: "light" },
       settings: { consumptionThreshold: 3 },
@@ -155,9 +157,10 @@ const app = createApp({
     onAuth(async (user) => {
       if (user) {
         this.user = { loggedIn: true, uid: user.uid, email: user.email };
-        this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
+        this.isAdmin = user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52";
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
+        if (this.isAdmin) await this.initAdminData();
       } else {
         this.user = { loggedIn: false, uid: null, email: null };
         this.isAdmin = false;
