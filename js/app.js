@@ -66,6 +66,7 @@ const app = createApp({
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
+      isAdmin: false,
       form: { email: "", password: "", phoneNumber: "", displayName: "" },
       userData: { displayName: "", phoneNumber: "", theme: "light" },
       settings: { consumptionThreshold: 3 },
@@ -153,12 +154,13 @@ const app = createApp({
   mounted() {
     onAuth(async (user) => {
       if (user) {
-        const token = await user.getIdTokenResult(true);
-        this.user = { loggedIn: true, uid: user.uid, email: user.email, token, isAdmin: !!token.claims?.admin, };
+        this.user = { loggedIn: true, uid: user.uid, email: user.email };
+        this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
       } else {
         this.user = { loggedIn: false, uid: null, email: null };
+        this.isAdmin = false;
         this.cleanupListeners();
         applyTheme("light");
       }

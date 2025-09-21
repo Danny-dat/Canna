@@ -136,6 +136,7 @@
           <a @click="setView('statistics')">Statistik</a>
           <a @click="setView('thcCalculator')">THC Rechner</a>
           <a @click="setView('myData')">Meine Daten</a>
+          <a v-if="isAdmin" @click="setView('admin')">Admin Bereich</a>
           <hr>
           <a @click="setView('privacy')">Datenschutz</a>
           <a @click="setView('terms')">AGB</a>
@@ -389,6 +390,12 @@
           <div class="footer-banner">
             <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
           </div>
+        </div>
+
+        <!-- Admin Bereich -->
+        <div v-if="currentView === 'admin' && isAdmin" class="admin-container card">
+          <h3>Admin Bereich</h3>
+          <p>Nur für Admins sichtbar.</p>
         </div>
 
         <!-- Meine Daten -->
