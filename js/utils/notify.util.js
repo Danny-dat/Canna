@@ -23,7 +23,7 @@ export async function notifyFriendsIfReachedLimit(uid, displayNameOrEmail, thres
   const today = new Date();
   const start = new Date(today.getFullYear(), today.getMonth(), today.getDate());
   const q = await db.collection('consumptions').where('userId','==',uid).where('timestamp','>=',start).get();
-  if (q.docs.length !== threshold) return;
+  if (q.docs.length < threshold) return;
 
   const userDoc = await db.collection('users').doc(uid).get();
   const friends = userDoc.data()?.friends || [];

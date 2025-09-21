@@ -1,3 +1,11 @@
+// ---- Vue ----
+const { createApp } = Vue;
+
+// ---- Imports (lokale Module) ----
+import { applyTheme } from "./utils/dom.util.js";
+import { formatTimestamp } from "./utils/format.util.js";
+import { calculateThc } from "./services/thc-calculator.service.js";
+
 import {
   onAuth,
   register,
@@ -12,100 +20,48 @@ import {
   saveUserSettings,
 } from "./services/user-data.service.js";
 import {
-  sendFriendRequest,
-  fetchFriendRequests,
-  listenForFriends,
-  acceptRequest as acceptFriendRequest,
-  declineRequest as declineFriendRequest,
-  listenForIncomingRequests,
-  removeFriend,
-  blockFriend,
-  syncFriendshipsOnLogin,
-} from "./services/friends.service.js";
-import { listenForEvents, voteEvent } from "./services/events.service.js";
-import {
-  initMap,
-  listenForConsumptionMarkers,
-  buildFriendMarkers,
-  setMarkerVisibility,
-  updateEventMarkers,
-} from "./services/map.service.js";
-import {
-  loadConsumptionStats,
-  renderChart,
-} from "./services/statistics.service.js";
-import { calculateThc } from "./services/thc-calculator.service.js";
+  ensurePublicProfileOnLogin,
+  updatePublicProfile,
+} from "./services/profile.service.js";
 
-import { applyTheme } from "./utils/dom.util.js";
-import {
-  playSoundAndVibrate,
-  notifyFriendsIfReachedLimit,
-} from "./utils/notify.util.js";
-import { formatTimestamp } from "./utils/format.util.js";
-import { db } from "./services/firebase-config.js";
-import {
-  chatIdFor,
-  ensureChatExists,
-  listenChatMessages,
-  sendChatMessage,
-} from "./services/chat.service.js";
-import {
-  setActiveChat,
-  startPresenceHeartbeat,
-  stopPresenceHeartbeat,
-} from "./services/presence.service.js";
-async function ensurePublicProfileOnLogin(user) {
-  const ref = db.collection("profiles_public").doc(user.uid);
-  const snap = await ref.get();
+import { shareMyFriendCode } from "./services/friends.service.js";
 
-  const name =
-    user.displayName ||
-    (user.email ? user.email.split("@")[0] : null) ||
-    `User-${user.uid.slice(0, 6)}`;
+import { initFriendsFeature } from "./features/friends.js";
+import { initEventsFeature, voteEvent } from "./features/events.js";
+import {
+  listenForNotifications,
+  markNotificationAsRead as markNotif,
+} from "./features/notifications.js";
+import { createMapFeature } from "./features/map.js";
+import { refreshStatsFor } from "./features/statistics.js";
+import { logConsumption } from "./features/consumption.js";
 
-  if (!snap.exists) {
-    await ref.set(
-      {
-        displayName: name,
-        photoURL: user.photoURL || null,
-        createdAt: new Date(),
-      },
-      { merge: true }
-    );
-  } else if (!snap.data().displayName && name) {
-    await ref.set({ displayName: name }, { merge: true });
-  }
-}
+import { db } from "./services/firebase-config.js"; // für handleNotificationClick
 
-const app = Vue.createApp({
+// ---- App ----
+const app = createApp({
   data() {
     return {
+      // UI Shell
       isLogin: true,
       _isLogging: false,
-      user: { loggedIn: false, uid: null, email: null },
       currentView: "dashboard",
       showMenu: false,
       showNotifications: false,
       showSettings: false,
       showAlert: false,
       alertMessage: "",
+      bannerInterval: null,
+
+      // Auth + Profile
+      user: { loggedIn: false, uid: null, email: null },
       form: { email: "", password: "", phoneNumber: "", displayName: "" },
-      friendIdInput: "",
-      chatMessageInput: "",
       userData: { displayName: "", phoneNumber: "", theme: "light" },
-      thcCalc: {
-        gender: "male",
-        age: 48,
-        weight: 120,
-        bodyFat: 30,
-        frequency: "often",
-        amount: 1.0,
-        thcPercentage: 25,
-        lastConsumption: new Date(Date.now() - 24 * 60 * 60 * 1000)
-          .toISOString()
-          .slice(0, 16),
-        result: { value: null, status: null, waitTime: null },
-      },
+      settings: { consumptionThreshold: 3 },
+      showReset: false,
+      resetEmail: "",
+
+      // Dashboard UI
       landingBannerIndex: 0,
       landingBanners: [
         {
@@ -128,8 +84,24 @@ const app = Vue.createApp({
           alt: "Angebot 2",
         },
       ],
-      bannerInterval: null,
 
+      // Domain-State
+      friends: [],
+      friendRequests: [],
+      friendIdInput: "",
+      notifications: [],
+      events: [],
+
+      // Chat (Platzhalter – Feature bindest du später)
+      activeChat: {
+        chatId: null,
+        partner: null,
+        messages: [],
+        unsubscribe: null,
+      },
+      chatMessageInput: "",
+
+      // Auswahl + THC
       products: [
         { name: "Hash", img: "images/hash.png" },
         { name: "Blüte", img: "images/flower.png" },
@@ -137,28 +109,27 @@ const app = Vue.createApp({
       ],
       devices: ["Joint", "Bong", "Vaporizer", "Pfeife"],
       selection: { product: null, device: null },
-      showReset: false,
-      resetEmail: "",
-      friends: [],
-      friendRequests: [],
-      notifications: [],
-      events: [],
-      activeChat: {
-        chatId: null,
-        partner: null,
-        messages: [],
-        unsubscribe: null,
+      thcCalc: {
+        gender: "male",
+        age: 48,
+        weight: 120,
+        bodyFat: 30,
+        frequency: "often",
+        amount: 1.0,
+        thcPercentage: 25,
+        lastConsumption: new Date(Date.now() - 86400000)
+          .toISOString()
+          .slice(0, 16),
+        result: { value: null, status: null, waitTime: null },
       },
 
-      map: null,
-      consumptionChart: null,
-      settings: { consumptionThreshold: 3 },
+      // Map/Stats
+      mapFx: null,
       showFriendsOnMap: false,
-      userMarkers: [],
-      friendMarkers: [],
-      eventMarkers: [],
-      mapUnsubs: [],
-      firestoreListeners: [],
+      consumptionChart: null,
+
+      // interne Unsubscriber
+      _unsubs: [],
     };
   },
 
@@ -172,19 +143,7 @@ const app = Vue.createApp({
     onAuth(async (user) => {
       if (user) {
         this.user = { loggedIn: true, uid: user.uid, email: user.email };
-
-        try {
-          await ensurePublicProfileOnLogin(user);
-        } catch (e) {
-          console.warn(e);
-        }
-
-        try {
-          await syncFriendshipsOnLogin(user.uid);
-        } catch (e) {
-          console.warn("syncFriendshipsOnLogin failed:", e);
-        }
-
+        await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
       } else {
         this.user = { loggedIn: false, uid: null, email: null };
@@ -192,193 +151,132 @@ const app = Vue.createApp({
         applyTheme("light");
       }
     });
+
     this.startBannerRotation();
+
+    this._onDocClick = (e) => {
+      if (!this.showNotifications) return;
+      const bellWrap = this.$refs?.bellWrap;
+      if (!bellWrap) return;
+      if (!bellWrap.contains(e.target)) {
+        this.showNotifications = false;
+      }
+    };
+    this._onKeyDown = (e) => {
+      if (e.key === "Escape") this.showNotifications = false;
+    };
+
+    document.addEventListener("click", this._onDocClick);
+    document.addEventListener("keydown", this._onKeyDown);
   },
 
   methods: {
-    // ---------- Helpers ----------
-    async _waitForSizedElement(selector, { tries = 40, delay = 50 } = {}) {
-      for (let i = 0; i < tries; i++) {
-        const el = document.querySelector(selector);
-        if (el && el.offsetWidth > 0 && el.offsetHeight > 0) return el;
-        await new Promise((r) => setTimeout(r, delay));
-      }
-      throw new Error(`Element ${selector} nicht sichtbar/sized`);
-    },
-    _round(n, decimals = 3) {
-      const f = Math.pow(10, decimals);
-      return Math.round(n * f) / f;
-    },
+    // ---------------- UI / Navigation ----------------
+    formatTimestamp,
 
-    // Map vollständig abbauen (Listener + Marker + Map)
-    teardownMap() {
-      try {
-        this.mapUnsubs?.forEach((u) => {
-          try {
-            u && u();
-          } catch {}
-        });
-      } catch {}
-      this.mapUnsubs = [];
-
-      try {
-        this.userMarkers.forEach((m) => m.remove());
-      } catch {}
-      try {
-        this.friendMarkers.forEach((m) => m.remove());
-      } catch {}
-      try {
-        this.eventMarkers.forEach((m) => m.remove());
-      } catch {}
-      this.userMarkers = [];
-      this.friendMarkers = [];
-      this.eventMarkers = [];
-
-      if (this.map?.remove) this.map.remove();
-      this.map = null;
-    },
-
-    async _mountMapIfNeeded() {
-      if (this.currentView !== "dashboard") return;
-
-      const el = document.getElementById("map");
-      if (!this.map || !el || this.map._container !== el) {
-        this.teardownMap();
-        try {
-          await this._waitForSizedElement("#map");
-        } catch (e) {
-          console.warn("Map init TIMEOUT:", e);
-          return;
-        }
-
-        this.map = initMap("map");
-
-        // Eigene Konsum-Pins
-        const unsubConsumptions = listenForConsumptionMarkers(
-          this.map,
-          this.user.uid,
-          (markers) => {
-            if (!this.map) return; // Guard
-            this.userMarkers.forEach((m) => m.remove());
-            this.userMarkers = markers;
-          }
-        );
-        this.mapUnsubs.push(unsubConsumptions);
-
-        // Event-Marker initial
-        this.eventMarkers = updateEventMarkers(
-          this.map,
-          this.user.uid,
-          this.events,
-          this.eventMarkers
-        );
-
-        // Layout/Resize
-        requestAnimationFrame(() => this.map && this.map.invalidateSize());
-        const onResize = () => this.map && this.map.invalidateSize();
-        window.addEventListener("resize", onResize);
-        this.mapUnsubs.push(() =>
-          window.removeEventListener("resize", onResize)
-        );
-      } else {
-        this.map.invalidateSize();
-      }
-    },
-
-    // ---------- Navigation ----------
     toggleMenu() {
       this.showMenu = !this.showMenu;
-      this.$nextTick(() => this.map && this.map.invalidateSize());
+      this.$nextTick(() => this.mapFx?.map && this.mapFx.map.invalidateSize());
     },
-
+    toggleSettings() {
+      this.showSettings = !this.showSettings;
+      this.$nextTick(() => this.mapFx?.map && this.mapFx.map.invalidateSize());
+    },
+    toggleNotifications() {
+      this.showNotifications = !this.showNotifications;
+    },
     setView(view) {
-      // Dashboard verlassen → Map sauber entsorgen
-      if (this.currentView === "dashboard" && view !== "dashboard")
-        this.teardownMap();
-
+      if (this.currentView === "dashboard" && view !== "dashboard") {
+        this.mapFx?.teardown();
+      }
       this.currentView = view;
       this.showMenu = false;
 
       if (view === "dashboard") {
-        this.$nextTick(() => this._mountMapIfNeeded());
+        this.$nextTick(() => this.mapFx?.mountIfNeeded());
         this.refreshStats();
       } else if (view === "statistics") {
         this.refreshStats();
       }
     },
 
-    toggleNotifications() {
-      this.showNotifications = !this.showNotifications;
+    closeAlert() {
+      this.showAlert = false;
+    },
+    startBannerRotation() {
+      this.bannerInterval = setInterval(() => {
+        this.landingBannerIndex =
+          (this.landingBannerIndex + 1) % this.landingBanners.length;
+        this.dashboardBannerIndex =
+          (this.dashboardBannerIndex + 1) % this.dashboardBanners.length;
+      }, 5000);
     },
 
-    // ---------- Init ----------
+    // ---------------- Bootstrap Features ----------------
     async initAppFeatures() {
-      // Live: Benachrichtigungen
-      this.listenForNotifications();
-
-      // Live: eingehende Friend Requests (pending)
-      const unsubIncoming = listenForIncomingRequests(this.user.uid, (reqs) => {
-        this.friendRequests = reqs;
-      });
-      this.firestoreListeners.push(unsubIncoming);
-
-      // Live: Freunde (aus accepted-Requests -> Profile aus profiles_public)
-      this.unsubscribeFriends = listenForFriends(
-        this.user.uid,
-        async (friends) => {
-          this.friends = friends;
-
-          // Map-Freundesmarker neu aufbauen (buildFriendMarkers sollte profiles_public.lastLocation lesen!)
-          if (!this.map) return;
-          this.friendMarkers.forEach((m) => m.remove());
-          this.friendMarkers = await buildFriendMarkers(this.map, friends);
-          this.toggleFriendMarkers();
-        }
-      );
-
-      // Live: Events
-      this.unsubscribeEvents = listenForEvents((events) => {
-        this.events = events;
-        if (this.map) {
-          this.eventMarkers = updateEventMarkers(
-            this.map,
-            this.user.uid,
-            this.events,
-            this.eventMarkers
-          );
-        }
-      });
-
-      // Settings + Userdaten
+      // Settings + UserData
       this.settings = await loadUserSettings(this.user.uid);
       const data = await loadUserData(this.user.uid);
-      this.userData.displayName = data.displayName;
-      this.userData.phoneNumber = data.phoneNumber;
-      this.userData.theme = data.theme;
-      applyTheme(data.theme);
+      this.userData = { ...this.userData, ...data };
+      applyTheme(this.userData.theme);
 
-      this.refreshStats();
-      this.$nextTick(() => this._mountMapIfNeeded());
+      // Notifications (live)
+      const stopNoti = listenForNotifications(this.user, {
+        onUpdate: (list) => {
+          this.notifications = list;
+        },
+        isChatOpenWith: (senderId) => this.activeChat?.partner?.id === senderId,
+      });
+      this._unsubs.push(stopNoti);
+
+      // Friends (live)
+      const stopFriends = initFriendsFeature(this, {
+        onFriends: async (friends) => {
+          this.friends = friends;
+          await this.mapFx?.rebuildFriendMarkers(friends);
+        },
+      });
+      this._unsubs.push(stopFriends);
+
+      // Events (live)
+      const stopEvents = initEventsFeature(this, {
+        onEvents: (events) => {
+          this.events = events;
+          this.mapFx?.updateEventPins();
+        },
+      });
+      this._unsubs.push(stopEvents);
+
+      // Map
+      this.mapFx = createMapFeature(this);
+      this.$nextTick(() => this.mapFx.mountIfNeeded());
+
+      // Stats
+      await this.refreshStats();
     },
 
     cleanupListeners() {
-      // ALLES aufräumen
-      this.teardownMap();
       try {
-        this.firestoreListeners.forEach((u) => u && u());
+        this._unsubs?.forEach((u) => u && u());
       } catch {}
-      this.firestoreListeners = [];
-      this.unsubscribeEvents?.();
-      this.unsubscribeFriends?.();
-      this.activeChat.unsubscribe?.();
+      this._unsubs = [];
+      this.mapFx?.teardown();
       if (this.bannerInterval) clearInterval(this.bannerInterval);
+
+      try {
+        document.removeEventListener("click", this._onDocClick);
+      } catch {}
+      try {
+        document.removeEventListener("keydown", this._onKey);
+      } catch {}
+      this._onDocClick = this._onKey = null;
     },
 
-    // ---------- Auth ----------
+    // ---------------- Auth ----------------
     async doRegister() {
       const phoneRegex = /^(015|016|017)\d{8,9}$/;
-      const pn = this.form.phoneNumber.replace(/[\s\/-]/g, "");
-      if (!this.form.displayName.trim())
+      const pn = (this.form.phoneNumber || "").replace(/[\s\/-]/g, "");
+      if (!this.form.displayName?.trim())
         return alert("Bitte gib einen Anzeigenamen ein.");
       if (!phoneRegex.test(pn))
         return alert("Bitte gib eine gültige deutsche Handynummer ein.");
@@ -399,27 +297,32 @@ const app = Vue.createApp({
       this.showMenu = false;
     },
 
-    // ---------- User Data ----------
+    resetPasswordFlow() {
+      this.resetEmail = this.form?.email || "";
+      this.showReset = true;
+    },
+    async doPasswordReset() {
+      try {
+        await resetPassword(this.resetEmail || this.form.email);
+        this.showReset = false;
+        this.resetEmail = "";
+        alert("Wenn die E-Mail existiert, wurde ein Reset-Link gesendet.");
+      } catch (e) {
+        alert(e?.message || "Konnte Reset-Link nicht senden.");
+      }
+    },
+
+    // ---------------- User Data / Settings ----------------
     async saveUserData() {
       await saveUserData(this.user.uid, {
         displayName: this.userData.displayName,
         phoneNumber: this.userData.phoneNumber,
         theme: this.userData.theme,
       });
-
-      // öffentliches Profil (lesbar für Freunde)
-      await db
-        .collection("profiles_public")
-        .doc(this.user.uid)
-        .set(
-          {
-            displayName: this.userData.displayName || this.user.email,
-            photoURL: null,
-            updatedAt: new Date(),
-          },
-          { merge: true }
-        );
-
+      await updatePublicProfile(this.user.uid, {
+        displayName: this.userData.displayName || this.user.email,
+        photoURL: null,
+      });
       alert("Daten gespeichert!");
       applyTheme(this.userData.theme);
       this.setView("dashboard");
@@ -429,159 +332,46 @@ const app = Vue.createApp({
       this.showSettings = false;
     },
 
-    // ---------- Konsum + Notify ----------
+    // ---------------- Consumption ----------------
     async logConsumption() {
       try {
         if (this._isLogging) return;
         this._isLogging = true;
 
-        if (!this.selection.product || !this.selection.device) {
-          this.alertMessage = "Bitte wähle ein Produkt und ein Gerät aus.";
-          this.showAlert = true;
-          return;
-        }
-        if (!this.user?.uid) {
-          this.alertMessage = "Nicht eingeloggt – bitte erneut anmelden.";
-          this.showAlert = true;
-          return;
-        }
-
-        // Tageslimit (Composite-Index: userId ASC, timestamp ASC)
-        const today = new Date();
-        const start = new Date(
-          today.getFullYear(),
-          today.getMonth(),
-          today.getDate()
-        );
-
-        let q;
-        try {
-          q = await db
-            .collection("consumptions")
-            .where("userId", "==", this.user.uid)
-            .where("timestamp", ">=", start)
-            .orderBy("timestamp", "asc")
-            .limit(this.settings.consumptionThreshold)
-            .get();
-        } catch (e) {
-          console.error("Firestore-Query-Fehler:", e);
-          this.alertMessage =
-            e.code === "failed-precondition"
-              ? "Der benötigte Firestore-Index wird (noch) erstellt. Bitte gleich nochmal versuchen."
-              : "Fehler beim Laden der Daten.";
-          this.showAlert = true;
-          return;
-        }
-
-        if (q.docs.length >= this.settings.consumptionThreshold) {
+        const res = await logConsumption(this);
+        if (res.limited) {
           this.alertMessage = `Du hast dein Tageslimit von ${this.settings.consumptionThreshold} Einheiten erreicht!`;
           this.showAlert = true;
-          playSoundAndVibrate();
           return;
         }
-
-        // Geolocation (soft-fail)
-        const pos = await new Promise((resolve) => {
-          if (!("geolocation" in navigator)) return resolve(null);
-          navigator.geolocation.getCurrentPosition(
-            (p) => resolve(p),
-            () => resolve(null),
-            { enableHighAccuracy: true, timeout: 8000, maximumAge: 0 }
-          );
-        });
-
-        // Speichern (consumption)
-        try {
-          await db.collection("consumptions").add({
-            userId: this.user.uid,
-            product: this.selection.product,
-            device: this.selection.device,
-            location:
-              pos && pos.coords
-                ? { lat: pos.coords.latitude, lng: pos.coords.longitude }
-                : null,
-            timestamp: new Date(),
-          });
-        } catch (e) {
-          console.error("Firestore-Write-Fehler:", e);
-          this.alertMessage =
-            "Speichern fehlgeschlagen. Details in der Konsole.";
-          this.showAlert = true;
-          return;
-        }
-
-        // Öffentlich: letzte (grobe) Position für Freunde aktualisieren
-        try {
-          if (pos && pos.coords) {
-            await db
-              .collection("profiles_public")
-              .doc(this.user.uid)
-              .set(
-                {
-                  lastLocation: {
-                    lat: this._round(pos.coords.latitude, 3), // ~110 m
-                    lng: this._round(pos.coords.longitude, 3),
-                  },
-                  lastActiveAt: new Date(),
-                },
-                { merge: true }
-              );
-          } else {
-            await db.collection("profiles_public").doc(this.user.uid).set(
-              {
-                lastActiveAt: new Date(),
-              },
-              { merge: true }
-            );
-          }
-        } catch (e) {
-          console.warn(
-            "profiles_public lastLocation Update fehlgeschlagen:",
-            e
-          );
-        }
-
-        // UI reset + Benachrichtigen + Stats
         this.selection = { product: null, device: null };
-
-        try {
-          await notifyFriendsIfReachedLimit(
-            this.user.uid,
-            this.userData.displayName || this.user.email,
-            this.settings.consumptionThreshold
-          );
-        } catch (e) {
-          console.warn("notifyFriendsIfReachedLimit Fehler:", e);
-        }
-
         await this.refreshStats();
         this.alertMessage = "Eintrag gespeichert.";
+        this.showAlert = true;
+      } catch (e) {
+        this.alertMessage = e?.message || "Speichern fehlgeschlagen.";
         this.showAlert = true;
       } finally {
         this._isLogging = false;
       }
     },
 
-    // ---------- Statistik ----------
+    // ---------------- Statistics ----------------
     async refreshStats() {
-      if (!this.user.uid) return;
-      const stats = await loadConsumptionStats(this.user.uid);
-      this.consumptionChart = renderChart(
-        "consumptionChart",
-        stats,
+      this.consumptionChart = await refreshStatsFor(
+        this.user.uid,
         this.consumptionChart
       );
     },
 
-    // ---------- Map ----------
+    // ---------------- Map ----------------
     toggleFriendMarkers() {
-      if (!this.map) return; // Guard
-      setMarkerVisibility(this.map, this.friendMarkers, this.showFriendsOnMap);
+      this.mapFx?.toggleFriendMarkers();
     },
 
-    // ---------- Events ----------
+    // ---------------- Events ----------------
     voteEvent(id, dir) {
-      return voteEvent(id, this.user.uid, dir);
+      return voteEvent(this, id, dir);
     },
     voteEventUp(id) {
       return this.voteEvent(id, "up");
@@ -590,213 +380,18 @@ const app = Vue.createApp({
       return this.voteEvent(id, "down");
     },
 
-    // ---------- Freunde ----------
-    async actionSendFriendRequest() {
-      const id = this.friendIdInput.trim();
-      if (!id || id === this.user.uid) return alert("Ungültige User-ID.");
-      try {
-        await sendFriendRequest({
-          fromUid: this.user.uid,
-          fromEmail: this.user.email,
-          fromDisplayName: this.userData.displayName || this.user.email,
-          toUid: id,
-        });
-        alert("Freundschaftsanfrage gesendet!");
-        this.friendIdInput = "";
-      } catch (e) {
-        alert(e.message || "Konnte Anfrage nicht senden.");
-      }
-    },
-
-    async actionFetchFriendRequests() {
-      this.friendRequests = await fetchFriendRequests(this.user.uid);
-      if (!this.friendRequests.length)
-        alert("Keine neuen Freundschaftsanfragen.");
-    },
-
-    async removeFriendB(friend) {
-      const friendUid = friend?.id;
-      if (!friendUid) return;
-
-      const name =
-        friend.username || friend.displayName || friend.label || friendUid;
-      if (!confirm(`Freundschaft mit "${name}" beenden?`)) return;
-
-      try {
-        await removeFriend(this.user.uid, friendUid);
-        alert("Freundschaft beendet.");
-      } catch (e) {
-        console.error(e);
-        alert(e.message || "Konnte Freundschaft nicht beenden.");
-      }
-    },
-
-    // optional
-    async blockFriendB(friend) {
-      const friendUid = friend?.id;
-      if (!friendUid) return;
-      if (
-        !confirm(
-          `"${friend.username || friend.displayName || friend.id}" blockieren?`
-        )
-      )
-        return;
-      try {
-        await blockFriend(this.user.uid, friendUid);
-        alert("Benutzer blockiert.");
-      } catch (e) {
-        alert(e.message || "Blockieren fehlgeschlagen.");
-      }
-    },
-
-    // neue, eindeutig benannte Wrapper:
-    acceptRequest(req) {
-      return acceptFriendRequest(this.user.uid, req);
-    },
-    declineRequest(req) {
-      return declineFriendRequest(this.user.uid, req);
-    },
-
-    // ---------- Chat ----------
-    shareProfile() {
-      const text = `Mein Freundschaftscode: ${this.user.uid}`;
-      if (navigator.share) return navigator.share({ text }).catch(() => {});
-      navigator.clipboard?.writeText(this.user.uid);
-      alert("Freundschaftscode kopiert!");
-    },
-    async openChat(friend) {
-      if (!friend?.id) return;
-
-      // alten Listener abbauen
-      this.activeChat.unsubscribe?.();
-
-      const cid = chatIdFor(this.user.uid, friend.id);
-
-      // 1) Chat-Dokument sicher anlegen (wichtig für Rules bei update)
-      await ensureChatExists(this.user.uid, friend.id);
-
-      // 2) lokalen State setzen
-      this.activeChat.chatId = cid;
-      this.activeChat.partner = friend;
-      this.activeChat.messages = [];
-
-      // 3) Presence setzen + Heartbeat starten
-      setActiveChat(this.user.uid, cid).catch(() => {});
-      startPresenceHeartbeat(this.user.uid);
-
-      // 4) Live-Nachrichten hören
-      this.activeChat.unsubscribe = listenChatMessages(cid, (msgs) => {
-        this.activeChat.messages = msgs;
-
-        // Auto-Scroll + Input fokussieren
-        this.$nextTick(() => {
-          const box = document.querySelector("#chatMessages");
-          if (box) box.scrollTop = box.scrollHeight;
-          this.$refs.chatInput?.focus();
-        });
-      });
-    },
-    async sendMessage() {
-      const txt = this.chatMessageInput?.trim();
-      if (!txt || !this.activeChat?.partner?.id) return;
-      await sendChatMessage({
-        fromUid: this.user.uid,
-        toUid: this.activeChat.partner.id,
-        text: txt,
-      });
-      this.chatMessageInput = "";
-    },
-
-    closeChat() {
-      this.activeChat.unsubscribe?.();
-      this.activeChat = {
-        chatId: null,
-        partner: null,
-        messages: [],
-        unsubscribe: null,
-      };
-      setActiveChat(this.user.uid, null);
-      stopPresenceHeartbeat();
-    },
-
-    // ---------- THC Rechner ----------
-    calculateThcAbbau() {
-      const r = calculateThc(this.thcCalc);
-      if (r.error) return alert(r.error);
-      this.thcCalc.result = r;
-    },
-
-    // ---------- Notifications ----------
-    listenForNotifications() {
-      const unsub = db
-        .collection("notifications")
-        .where("recipientId", "==", this.user.uid)
-        .onSnapshot((snap) => {
-          let addedUnread = false;
-
-          const all = snap.docs
-            .map((d) => ({ id: d.id, ...d.data() }))
-            // ✨ Filter: wenn aktuell ein Chat offen, keine Notis für diesen Chat
-            .filter((n) => {
-              if (n.type === "chat_message" && this.activeChat?.chatId) {
-                // wenn der Sender derselbe wie der Chat-Partner ist → nicht anzeigen
-                return n.senderId !== this.activeChat.partner?.id;
-              }
-              return true;
-            });
-
-          all.sort(
-            (a, b) =>
-              (b.timestamp?.toDate?.() ?? b.timestamp) -
-              (a.timestamp?.toDate?.() ?? a.timestamp)
-          );
-
-          this.notifications = all.slice(0, 10);
-
-          // nur Sound/Vibration, wenn wirklich neue relevante Notification dabei ist
-          snap.docChanges().forEach((ch) => {
-            if (ch.type === "added") {
-              const d = ch.doc.data();
-              if (!d.read) {
-                if (
-                  !(
-                    d.type === "chat_message" &&
-                    this.activeChat?.chatId &&
-                    d.senderId === this.activeChat.partner?.id
-                  )
-                ) {
-                  addedUnread = true;
-                }
-              }
-            }
-          });
-
-          if (addedUnread) {
-            try {
-              playSoundAndVibrate();
-            } catch {}
-          }
-        });
-      this.firestoreListeners.push(unsub);
-    },
+    // ---------------- Notifications ----------------
     async handleNotificationClick(n) {
-      // 1) als gelesen markieren (leise, ohne UI-Flackern)
       if (!n.read) {
         try {
-          await db.collection("notifications").doc(n.id).update({ read: true });
+          await markNotif(n.id);
         } catch {}
       }
-
-      // 2) Nur Chat-Notis deeplinken
       if (n.type !== "chat_message") return;
 
-      // Absender ist dein Chat-Partner
       const partnerId = n.senderId;
-
-      // 3) Partner-Objekt finden/bauen
       let friend = this.friends.find((f) => f.id === partnerId);
       if (!friend) {
-        // Minimaldaten nachladen (optional für Label/Avatar)
         try {
           const snap = await db
             .collection("profiles_public")
@@ -809,52 +404,36 @@ const app = Vue.createApp({
         }
       }
 
-      // 4) Notifications-Panel schließen (optional)
       this.showNotifications = false;
-
-      // 5) View setzen, Chat öffnen
       if (this.currentView !== "dashboard") this.setView("dashboard");
-      // openChat existiert bereits
-      this.openChat(friend);
+      // hier könntest du createChatFeature anbinden und openChat(friend) aufrufen, wenn du das Feature dranhängst
     },
     async markNotificationAsRead(n) {
-      if (!n.read)
-        await db.collection("notifications").doc(n.id).update({ read: true });
-    },
-    formatTimestamp,
-
-    // ---------- UI ----------
-    toggleSettings() {
-      this.showSettings = !this.showSettings;
-      this.$nextTick(() => this.map && this.map.invalidateSize());
-    },
-    closeAlert() {
-      this.showAlert = false;
-    },
-    startBannerRotation() {
-      this.bannerInterval = setInterval(() => {
-        this.landingBannerIndex =
-          (this.landingBannerIndex + 1) % this.landingBanners.length;
-        this.dashboardBannerIndex =
-          (this.dashboardBannerIndex + 1) % this.dashboardBanners.length;
-      }, 5000);
-    },
-    resetPasswordFlow() {
-      // öffnet den Dialog und prefills mit der Login-Mail (falls vorhanden)
-      this.resetEmail = this.form?.email || "";
-      this.showReset = true;
+      if (!n.read) await markNotif(n.id);
     },
 
-    async doPasswordReset() {
+    // ---------------- Friends / Share ----------------
+    async shareProfile() {
       try {
-        await resetPassword(this.resetEmail || this.form.email);
-        this.showReset = false;
-        this.resetEmail = "";
-        alert("Wenn die E-Mail existiert, wurde ein Reset-Link gesendet.");
+        const res = await shareMyFriendCode(this.user?.uid);
+        if (res?.method === "clipboard" || res?.method === "execCommand") {
+          this.alertMessage = "Freundschaftscode kopiert!";
+          this.showAlert = true;
+        }
+        // Bei navigator.share gibt's kein Alert, da das OS den Share-Sheet zeigt.
       } catch (e) {
-        alert(e?.message || "Konnte Reset-Link nicht senden.");
+        this.alertMessage = e?.message || "Teilen fehlgeschlagen.";
+        this.showAlert = true;
       }
+    },
+
+    // ---------------- THC ----------------
+    calculateThcAbbau() {
+      const r = calculateThc(this.thcCalc);
+      if (r.error) return alert(r.error);
+      this.thcCalc.result = r;
     },
   },
 });
+
 app.mount("#app");

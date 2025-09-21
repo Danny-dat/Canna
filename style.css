@@ -155,7 +155,6 @@ body {
 .notification-item:hover { background-color: var(--background-color); }
 .notification-item p { margin: 0 0 5px 0; font-size: 14px; }
 .notification-item small { color: var(--text-muted-color); }
-
 /* =============================================================== */
 /* TRACKER, STATS, FRIENDS, MAP (GENERAL STYLES)                   */
 /* =============================================================== */

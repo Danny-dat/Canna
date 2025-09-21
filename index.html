@@ -99,7 +99,7 @@
           </div>
 
           <!-- Benachrichtigungen -->
-          <div class="notification-bell bell-btn" @click.stop="toggleNotifications" aria-label="Benachrichtigungen" title="Benachrichtigungen">
+          <div class="notification-bell bell-btn" ref="bellWrap" @click.stop="toggleNotifications" aria-label="Benachrichtigungen" title="Benachrichtigungen">
             <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -337,11 +337,12 @@
             <div v-if="thcCalc.result.status === 'green'" class="result-box result-box-green">
               <h4>Fahrtüchtig</h4>
               <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
+              <p>Dein geschätzter Wert liegt in einem Bereich, der als unbedenklich für die Fahrtüchtigkeit angesehen wird. Fahre trotzdem nur, wenn du dich absolut fit fühlst.</p>
             </div>
           </div>
 
           <div class="warning-text">
-            <p><strong>Haftungsausschluss:</strong> Schätzung, keine Rechts- oder Medizinauskunft.</p>
+              <p><strong>Haftungsausschluss:</strong> Die hier angezeigten Ergebnisse sind lediglich Schätzungen und basieren auf vereinfachten Modellen. Der tatsächliche Abbau von THC ist von zahlreichen individuellen Faktoren wie Stoffwechsel, Körpergewicht und Konsumhäufigkeit abhängig. Diese Berechnung ist nicht rechtsverbindlich und sollte nicht zur Beurteilung der Fahrtüchtigkeit oder für medizinische Zwecke verwendet werden.</p>
           </div>
           <div class="footer-banner">
             <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">

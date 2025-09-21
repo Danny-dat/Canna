@@ -268,6 +268,49 @@ export async function unblockFriend(myUid, friendUid) {
   });
 }
 
+export async function shareMyFriendCode(uid) {
+  const code = (uid || '').trim();
+  if (!code) throw new Error("Kein Nutzer angemeldet.");
+
+  const text = `Mein CannaTrack Freundschaftscode: ${code}`;
+
+  // 1) Native Share (mobil/unterstützte Browser)
+  try {
+    if (navigator.share) {
+      await navigator.share({ title: "CannaTrack", text });
+      return { method: "share", ok: true };
+    }
+    throw new Error("Web Share nicht verfügbar");
+  } catch (_) {
+    // weiter zu Clipboard
+  }
+
+  // 2) Clipboard API (HTTPS nötig)
+  try {
+    await navigator.clipboard.writeText(code);
+    return { method: "clipboard", ok: true };
+  } catch (_) {
+    // Fallback (ohne HTTPS/Clipboard-Rechte)
+  }
+
+  // 3) Letzter Fallback
+  try {
+    const tmp = document.createElement("textarea");
+    tmp.value = code;
+    tmp.style.position = "fixed";
+    tmp.style.left = "-9999px";
+    document.body.appendChild(tmp);
+    tmp.select();
+    document.execCommand("copy");
+    document.body.removeChild(tmp);
+    return { method: "execCommand", ok: true };
+  } catch {
+    // ganz einfacher Fallback
+    prompt("Code zum Kopieren:", code);
+    return { method: "prompt", ok: true };
+  }
+}
+
 /* Für dein Modell B: aktuell nichts zu tun */
 export async function syncFriendshipsOnLogin() {
   return;
