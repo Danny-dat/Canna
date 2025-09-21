@@ -38,6 +38,7 @@ import {
 import { createMapFeature } from "./features/map.js";
 import { refreshStatsFor } from "./features/statistics.js";
 import { logConsumption } from "./features/consumption.js";
+import { createChatFeature } from "./features/chat.js";
 
 import { db } from "./services/firebase-config.js"; // für handleNotificationClick
 
@@ -57,6 +58,7 @@ const app = createApp({
       bannerInterval: null,
       shareMenuOpen: false,
       _friends: null,
+      chatFx: null,
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
@@ -336,25 +338,50 @@ const app = createApp({
       this.mapFx = createMapFeature(this);
       this.$nextTick(() => this.mapFx.mountIfNeeded());
 
+      // Chat (live)
+      this.chatFx = createChatFeature(this, this);
+
       // Stats
       await this.refreshStats();
     },
 
     cleanupListeners() {
+      // 1) alle dynamischen Firestore-/Feature-Listener beenden
       try {
         this._unsubs?.forEach((u) => u && u());
       } catch {}
       this._unsubs = [];
-      this.mapFx?.teardown();
-      if (this.bannerInterval) clearInterval(this.bannerInterval);
 
+      // 2) Feature-spezifisch aufräumen
+      try {
+        this.mapFx?.teardown();
+      } catch {}
+      try {
+        this.chatFx?.unsubscribe?.();
+        this.chatFx = null;
+      } catch {}
+
+      // 3) Intervall stoppen
+      if (this.bannerInterval) {
+        clearInterval(this.bannerInterval);
+        this.bannerInterval = null;
+      }
+
+      // 4) DOM-Event-Listener sauber entfernen
       try {
         document.removeEventListener("click", this._onDocClick);
       } catch {}
       try {
-        document.removeEventListener("keydown", this._onKey);
+        document.removeEventListener("click", this._onShareOutside);
       } catch {}
-      this._onDocClick = this._onKey = null;
+      try {
+        document.removeEventListener("keydown", this._onKeyDown);
+      } catch {}
+
+      // 5) Referenzen nullen
+      this._onDocClick = null;
+      this._onShareOutside = null;
+      this._onKeyDown = null;
     },
 
     // ---------------- Auth ----------------
@@ -465,16 +492,38 @@ const app = createApp({
       return this.voteEvent(id, "down");
     },
 
+    // ---------------- Chat ----------------
+    openChat(friend) {
+      this.chatFx?.openChat(friend);
+    },
+    sendMessage() {
+      this.chatFx?.sendMessage();
+    },
+    closeChat() {
+      this.chatFx?.closeChat();
+    },
+
     // ---------------- Notifications ----------------
     async handleNotificationClick(n) {
+      // 1) als gelesen markieren (falls nötig)
       if (!n.read) {
         try {
           await markNotif(n.id);
         } catch {}
       }
+
+      // 2) Nur Chat-Notis öffnen
       if (n.type !== "chat_message") return;
 
-      const partnerId = n.senderId;
+      // 3) Partner ermitteln (senderId bevorzugt; Fallback aus chatId "a_b")
+      let partnerId = n.senderId;
+      if (!partnerId && n.chatId && typeof n.chatId === "string") {
+        const ids = n.chatId.split("_");
+        partnerId = ids.find((id) => id !== this.user.uid) || ids[0];
+      }
+      if (!partnerId) return;
+
+      // 4) Freund aus Liste oder Profil nachladen
       let friend = this.friends.find((f) => f.id === partnerId);
       if (!friend) {
         try {
@@ -482,17 +531,21 @@ const app = createApp({
             .collection("profiles_public")
             .doc(partnerId)
             .get();
-          const d = snap.exists ? snap.data() : {};
-          friend = { id: partnerId, displayName: d?.displayName || partnerId };
+          const d = snap.exists ? snap.data() || {} : {};
+          friend = { id: partnerId, displayName: d.displayName || partnerId };
         } catch {
           friend = { id: partnerId };
         }
       }
 
+      // 5) Dropdown schließen, zum Dashboard, Chat öffnen & fokussieren
       this.showNotifications = false;
       if (this.currentView !== "dashboard") this.setView("dashboard");
-      // hier könntest du createChatFeature anbinden und openChat(friend) aufrufen, wenn du das Feature dranhängst
+      await this.$nextTick();
+      this.openChat(friend);
+      this.$nextTick(() => this.$refs?.chatInput?.focus?.());
     },
+
     async markNotificationAsRead(n) {
       if (!n.read) await markNotif(n.id);
     },
