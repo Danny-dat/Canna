@@ -127,19 +127,19 @@ export function listenForFriends(myUid, cb) {
         friendIds.map(id => db.collection("profiles_public").doc(id).get().catch(()=>null))
       );
 
-      const friends = friendIds.map((id, i) => {
-        const ps = profiles[i];
-        const pub = ps && ps.exists ? (ps.data() || {}) : {};
-        const label = pub.username || pub.displayName || `${id.slice(0,6)}…`;
-        return {
-          id,
-          label,
-          displayName: pub.displayName ?? null,
-          username: pub.username ?? null,
-          photoURL: pub.photoURL ?? null,
-          lastLocation: pub.lastLocation ?? null,
-        };
-      });
+const friends = friendIds.map((id, i) => {
+    const ps = profiles[i];
+    const pub = ps && ps.exists ? (ps.data() || {}) : {};
+    const label = pub.username || pub.displayName || (id ? `${id.slice(0,6)}…` : ''); // Check if id exists
+    return {
+        id,
+        label,
+        displayName: pub.displayName ?? null,
+        username: pub.username ?? null,
+        photoURL: pub.photoURL ?? null,
+        lastLocation: pub.lastLocation ?? null,
+    };
+});
 
       cb(friends);
     });
