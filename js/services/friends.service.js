@@ -50,6 +50,19 @@ function pickAllowed(obj, allowed) {
   return out;
 }
 
+/** Beziehung-Dokumente zwischen A und B finden (unabhängig von Status/ Richtung) */
+async function findRelationshipDocs(a, b) {
+  const snap = await db
+    .collection("friend_requests")
+    .where("participants", "array-contains", a)
+    .get();
+  return snap.docs.filter((d) => {
+    const x = d.data() || {};
+    const ps = x.participants || [];
+    return ps.includes(b);
+  });
+}
+
 /* -----------------------------------------------------------
  * Öffentliche API
  * ---------------------------------------------------------*/
@@ -84,16 +97,37 @@ export async function sendFriendRequest({
   ]);
   if (!q1.empty || !q2.empty) return;
 
+  // Bereits befreundet? (accepted beidseitig prüfen)
+  const [qa, qb] = await Promise.all([
+    db
+      .collection("friend_requests")
+      .where("fromUid", "==", fromUid)
+      .where("toUid", "==", toUid)
+      .where("status", "==", "accepted")
+      .limit(1)
+      .get(),
+    db
+      .collection("friend_requests")
+      .where("fromUid", "==", toUid)
+      .where("toUid", "==", fromUid)
+      .where("status", "==", "accepted")
+      .limit(1)
+      .get(),
+  ]);
+  if (!qa.empty || !qb.empty) return;
+
+  // Create (deine Rules erlauben Zusatzfelder; wenn nicht, diese zwei Zeilen weglassen)
   const reqRef = await db.collection("friend_requests").add({
     fromUid,
-    fromEmail: fromEmail ?? null, // create erlaubt weitere Felder
-    fromDisplayName: fromDisplayName ?? null,
+    fromEmail: fromEmail ?? null, // optional
+    fromDisplayName: fromDisplayName ?? null, // optional
     toUid,
     status: "pending",
     createdAt: TS(),
     participants: [fromUid, toUid],
   });
 
+  // Notifikation an Empfänger
   await db.collection("notifications").add({
     type: "friend_request",
     requestId: reqRef.id,
@@ -150,11 +184,7 @@ export function listenForFriends(myUid, cb) {
 
       const profiles = await Promise.all(
         friendIds.map((id) =>
-          db
-            .collection("profiles_public")
-            .doc(id)
-            .get()
-            .catch(() => null)
+          db.collection("profiles_public").doc(id).get().catch(() => null)
         )
       );
 
@@ -164,7 +194,7 @@ export function listenForFriends(myUid, cb) {
         const label =
           pub.username ||
           pub.displayName ||
-          (id ? (id ? `${id.slice(0, 6)}…` : "") : ""); // Check if id exists
+          (id ? `${id.slice(0, 6)}…` : "");
         return {
           id,
           label,
@@ -225,36 +255,26 @@ export async function declineRequest(myUid, requestOrId) {
   } catch {}
 }
 
-/* Freund entfernen (Modell: status -> 'removed') */
+/* Freund entfernen → ALLE Beziehungs-Dokumente A↔B auf 'removed' */
 export async function removeFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  const snap = await db
-    .collection("friend_requests")
-    .where("participants", "array-contains", myUid)
-    .get();
+  const docs = await findRelationshipDocs(myUid, friendUid);
+  const targets = docs.filter((d) => d.data()?.status === "accepted");
+  if (!targets.length) throw new Error("Keine bestehende Freundschaft gefunden.");
 
-  const doc = snap.docs.find((d) => {
-    const x = d.data();
-    return (
-      x.status === "accepted" &&
-      ((x.fromUid === myUid && x.toUid === friendUid) ||
-        (x.fromUid === friendUid && x.toUid === myUid))
-    );
-  });
+  for (const d of targets) {
+    await safeUpdateRequestFull(d.id, {
+      status: "removed",
+      respondedAt: TS(),
+    });
+  }
 
-  if (!doc) throw new Error("Keine bestehende Freundschaft gefunden.");
-
-  await safeUpdateRequestFull(doc.id, {
-    status: "removed",
-    respondedAt: TS(),
-  });
-
-  // optional: Info an den anderen
+  // optional: Info an den anderen (einmal reicht)
   try {
     await db.collection("notifications").add({
       type: "friend_removed",
-      requestId: doc.id,
+      requestId: targets[0].id,
       recipientId: friendUid,
       senderId: myUid,
       message: "Die Freundschaft wurde beendet.",
@@ -264,53 +284,35 @@ export async function removeFriend(myUid, friendUid) {
   } catch {}
 }
 
-/* blocken (status -> 'blocked') */
+/* blocken → ALLE Beziehungs-Dokumente A↔B auf 'blocked' */
 export async function blockFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  const snap = await db
-    .collection("friend_requests")
-    .where("participants", "array-contains", myUid)
-    .get();
+  const docs = await findRelationshipDocs(myUid, friendUid);
+  if (!docs.length) throw new Error("Kein Beziehungs-Dokument gefunden.");
 
-  const doc = snap.docs.find((d) => {
-    const x = d.data();
-    return (
-      (x.fromUid === myUid && x.toUid === friendUid) ||
-      (x.fromUid === friendUid && x.toUid === myUid)
-    );
-  });
-  if (!doc) throw new Error("Kein Beziehungs-Dokument gefunden.");
-
-  await safeUpdateRequestFull(doc.id, {
-    status: "blocked",
-    respondedAt: TS(),
-  });
+  for (const d of docs) {
+    await safeUpdateRequestFull(d.id, {
+      status: "blocked",
+      respondedAt: TS(),
+    });
+  }
 }
 
-/* entblocken → auf 'removed' setzen (keine Freundschaft) */
+/* entblocken → ALLE 'blocked' → 'removed' (keine Freundschaft) */
 export async function unblockFriend(myUid, friendUid) {
   if (!myUid || !friendUid) throw new Error("UID fehlt.");
 
-  const snap = await db
-    .collection("friend_requests")
-    .where("participants", "array-contains", myUid)
-    .get();
+  const docs = await findRelationshipDocs(myUid, friendUid);
+  const targets = docs.filter((d) => d.data()?.status === "blocked");
+  if (!targets.length) throw new Error("Kein blockiertes Dokument gefunden.");
 
-  const doc = snap.docs.find((d) => {
-    const x = d.data();
-    return (
-      x.status === "blocked" &&
-      ((x.fromUid === myUid && x.toUid === friendUid) ||
-        (x.fromUid === friendUid && x.toUid === myUid))
-    );
-  });
-  if (!doc) throw new Error("Kein blockiertes Dokument gefunden.");
-
-  await safeUpdateRequestFull(doc.id, {
-    status: "removed",
-    respondedAt: TS(),
-  });
+  for (const d of targets) {
+    await safeUpdateRequestFull(d.id, {
+      status: "removed",
+      respondedAt: TS(),
+    });
+  }
 }
 
 export async function shareMyFriendCode(uid) {
