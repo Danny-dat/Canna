@@ -39,6 +39,7 @@ import { createMapFeature } from "./features/map.js";
 import { refreshStatsFor } from "./features/statistics.js";
 import { logConsumption } from "./features/consumption.js";
 import { createChatFeature } from "./features/chat.js";
+import { createGlobalChatFeature } from "./features/global-chat.js";
 
 import { db } from "./services/firebase-config.js"; // für handleNotificationClick
 
@@ -59,6 +60,9 @@ const app = createApp({
       shareMenuOpen: false,
       _friends: null,
       chatFx: null,
+      globalChatFx: null,
+      globalChat: { messages: [] },
+      globalChatInput: "",
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
@@ -192,23 +196,34 @@ const app = createApp({
       this.showMenu = !this.showMenu;
       this.$nextTick(() => this.mapFx?.map && this.mapFx.map.invalidateSize());
     },
+
     toggleSettings() {
       this.showSettings = !this.showSettings;
       this.$nextTick(() => this.mapFx?.map && this.mapFx.map.invalidateSize());
     },
+
     toggleNotifications() {
       this.showNotifications = !this.showNotifications;
     },
+
     setView(view) {
-      if (this.currentView === "dashboard" && view !== "dashboard") {
-        this.mapFx?.teardown();
-      }
+     if (this.currentView === "dashboard" && view !== "dashboard") {
+       this.mapFx?.teardown();
+     }
+     if (this.currentView === "globalChat" && view !== "globalChat") {
+       this.globalChatFx?.teardown();
+     }
+
       this.currentView = view;
       this.showMenu = false;
 
       if (view === "dashboard") {
         this.$nextTick(() => this.mapFx?.mountIfNeeded());
         this.refreshStats();
+     } else if (view === "globalChat") {
+       if (!this.globalChatFx) this.globalChatFx = createGlobalChatFeature(this, this);
+       this.globalChatFx.mount();
+       this.$nextTick(() => this.$refs?.globalChatInput?.focus?.());
       } else if (view === "statistics") {
         this.refreshStats();
       }
@@ -217,6 +232,7 @@ const app = createApp({
     closeAlert() {
       this.showAlert = false;
     },
+
     startBannerRotation() {
       this.bannerInterval = setInterval(() => {
         this.landingBannerIndex =
@@ -491,6 +507,15 @@ const app = createApp({
     voteEventDown(id) {
       return this.voteEvent(id, "down");
     },
+
+  // ---------------- Global Chat ----------------
+  openGlobalChat() {
+    if (this.currentView !== "globalChat") this.setView("globalChat");
+  },
+  
+  sendGlobalMessage() {
+    this.globalChatFx?.send();
+  },
 
     // ---------------- Chat ----------------
     openChat(friend) {
