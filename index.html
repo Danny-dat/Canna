@@ -269,11 +269,18 @@
                 <p>{{ friend.username || friend.displayName || friend.label || friend.id }}</p>
                 <span>Chat öffnen</span>
               </div>
-              <h5>User Aktionen</h5>
-              <div class="friend-actions">
-                <button class="btn-danger" @click.stop="removeFriendB(friend)">Entfernen</button>
-                <button class="btn-ghost" @click.stop="blockFriendB(friend)">Blockieren</button>
-              </div>
+                <div class="friend-actions">
+                  <select
+                    class="action-select"
+                    v-model="friend._action"
+                    @change.stop="handleFriendAction(friend)"
+                  >
+                    <option disabled value="">User Aktionen</option>
+                    <option value="remove">Freund entfernen</option>
+                    <option value="block">Blockieren</option>
+                    <option value="unblock">Entblocken</option>
+                  </select>
+                </div>
             </fieldset>
           </div>
         </div>
@@ -396,7 +403,7 @@
         <div v-if="currentView === 'admin' && isAdmin" class="admin-container card">
           <h3>Admin Bereich</h3>
             <p>Verwaltung von Events, Nutzern, Bannern und Statistiken</p>
-            
+
             <!-- Tabs -->
             <div style="display:flex; gap:8px; margin-bottom:12px;">
               <button @click="admin.tab='events'"  :class="{active: admin.tab==='events'}">Events</button>
@@ -429,15 +436,57 @@
             </div>
 
             <!-- Users -->
-            <div v-if="admin.tab==='users'">
+            <div v-if="admin.tab==='users'" class="card">
               <h4>Nutzer (öffentliches Profil)</h4>
-              <div v-for="u in admin.users" :key="u.id" style="display:flex; align-items:center; gap:8px; border-bottom:1px solid var(--border-color); padding:6px 0;">
-                <div style="flex:1;">
-                  <strong>{{ u.displayName || u.username || u.id }}</strong>
-                  <div style="font-size:12px; color:var(--text-muted-color);">ID: {{ u.id }}</div>
+
+              <!-- (deine Toolbar oben kann bleiben: Suche/Sortierung/Pagination) -->
+
+              <div
+                v-for="u in adminUsersPageItems"
+                :key="u.id"
+                class="user-row"
+                style="display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding:8px 0; flex-wrap:wrap;"
+              >
+                <div style="flex:1; min-width:220px;">
+                  <strong>
+                    {{ u.displayName || u.username || u.id }}
+                    <span v-if="u._banned" style="font-size:11px; padding:2px 6px; margin-left:6px; border-radius:10px; background:var(--danger-bg,#fee); color:var(--danger-fg,#900);">
+                      gesperrt
+                    </span>
+                  </strong>
+                  <div style="font-size:12px; color:var(--text-muted-color);">
+                    ID: {{ u.id }}
+                    <span v-if="u._email"> · {{ u._email }}</span>
+                  </div>
                 </div>
-                <input v-model="u.displayName" placeholder="Display Name" style="max-width:200px;">
-                <button @click="adminSaveUser(u)">Speichern</button>
+
+                <input
+                  v-model="u.displayName"
+                  placeholder="Display Name"
+                  style="max-width:240px; flex:0 1 240px;"
+                >
+
+                <!-- EIN Dropdown für alle Aktionen -->
+                <select
+                  class="action-select"
+                  v-model="u._action"
+                  @change="handleUserAction(u)"
+                  style="flex:0 0 180px;"
+                >
+                  <option value="" disabled selected>Aktion wählen…</option>
+                  <option value="save">Name speichern</option>
+                  <option :disabled="!u._email" value="reset">Passwort-Reset senden</option>
+                  <option v-if="!u._banned" value="ban">Sperren</option>
+                  <option v-else value="unban">Entsperren</option>
+                  <option value="wipe">Daten löschen</option>
+                </select>
+              </div>
+
+              <!-- Pagination unten (wie gehabt) -->
+              <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+                <button @click="adminPrevPage" :disabled="admin.usersPage<=1">Zurück</button>
+                <span>Seite {{ admin.usersPage }} / {{ adminUsersTotalPages }}</span>
+                <button @click="adminNextPage" :disabled="admin.usersPage>=adminUsersTotalPages">Weiter</button>
               </div>
             </div>
 

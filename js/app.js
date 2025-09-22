@@ -13,12 +13,14 @@ import {
   logout,
   resetPassword,
 } from "./services/auth.service.js";
+
 import {
   loadUserData,
   saveUserData,
   loadUserSettings,
   saveUserSettings,
 } from "./services/user-data.service.js";
+
 import {
   ensurePublicProfileOnLogin,
   updatePublicProfile,
@@ -153,46 +155,64 @@ const app = createApp({
     },
   },
 
-  mounted() {
-    onAuth(async (user) => {
-      if (user) {
-        this.user = { loggedIn: true, uid: user.uid, email: user.email };
-        this.isAdmin = user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52";
-        await ensurePublicProfileOnLogin(user);
-        await this.initAppFeatures();
-        if (this.isAdmin) await this.initAdminData();
-      } else {
-        this.user = { loggedIn: false, uid: null, email: null };
-        this.isAdmin = false;
-        this.cleanupListeners();
-        applyTheme("light");
+mounted() {
+  onAuth(async (user) => {
+    if (user) {
+      // --- BAN-CHECK ---
+      try {
+        const uSnap = await db.collection('users').doc(user.uid).get();
+        const isBanned = !!uSnap.data()?.isBanned;
+        if (isBanned) {
+          alert('Dein Account ist gesperrt. Bitte kontaktiere den Support.');
+          await logout();
+          return;
+        }
+      } catch (e) {
+        console.warn('[ban-check] users/{uid} read failed:', e);
       }
-    });
+      // --- /BAN-CHECK ---
 
-    this.startBannerRotation();
+      this.user = { loggedIn: true, uid: user.uid, email: user.email };
 
-    this._onDocClick = (e) => {
-      if (!this.showNotifications) return;
-      const bellWrap = this.$refs?.bellWrap;
-      if (!bellWrap) return;
-      if (!bellWrap.contains(e.target)) {
-        this.showNotifications = false;
-      }
-    };
-    this._onKeyDown = (e) => {
-      if (e.key === "Escape") this.showNotifications = false;
-    };
+      this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
 
-    document.addEventListener("click", this._onDocClick);
-    document.addEventListener("keydown", this._onKeyDown);
+      await ensurePublicProfileOnLogin(user);
+      await this.initAppFeatures();
 
-    this._onShareOutside = (e) => {
-      if (!this.shareMenuOpen) return;
-      const btn = document.querySelector(".btn-share-wrap");
-      if (btn && !btn.contains(e.target)) this.shareMenuOpen = false;
-    };
-    document.addEventListener("click", this._onShareOutside);
-  },
+      if (this.isAdmin) await this.initAdminFeature(user);
+
+    } else {
+      this.user = { loggedIn: false, uid: null, email: null };
+      this.isAdmin = false;
+      this.cleanupListeners();
+      applyTheme("light");
+    }
+  });
+
+  this.startBannerRotation();
+
+  this._onDocClick = (e) => {
+    if (!this.showNotifications) return;
+    const bellWrap = this.$refs?.bellWrap;
+    if (!bellWrap) return;
+    if (!bellWrap.contains(e.target)) {
+      this.showNotifications = false;
+    }
+  };
+  this._onKeyDown = (e) => {
+    if (e.key === "Escape") this.showNotifications = false;
+  };
+
+  document.addEventListener("click", this._onDocClick);
+  document.addEventListener("keydown", this._onKeyDown);
+
+  this._onShareOutside = (e) => {
+    if (!this.shareMenuOpen) return;
+    const btn = document.querySelector(".btn-share-wrap");
+    if (btn && !btn.contains(e.target)) this.shareMenuOpen = false;
+  };
+  document.addEventListener("click", this._onShareOutside);
+},
 
   methods: {
     // ---------------- UI / Navigation ----------------
@@ -321,6 +341,22 @@ const app = createApp({
       }
     },
 
+    handleFriendAction(friend) {
+      const act = friend._action;
+      friend._action = ""; // zurück auf Placeholder
+
+      if (!act) return;
+
+      switch (act) {
+        case "remove":
+          return this.removeFriendB(friend); // deine bestehende Methode
+        case "block":
+          return this.blockFriendB(friend); // deine bestehende Methode
+        case "unblock":
+          return this.unblockFriendB(friend);
+      }
+    },
+
     // ---------------- Bootstrap Features ----------------
     async initAppFeatures() {
       // Settings + UserData
@@ -328,6 +364,17 @@ const app = createApp({
       const data = await loadUserData(this.user.uid);
       this.userData = { ...this.userData, ...data };
       applyTheme(this.userData.theme);
+
+      // BAN-Watch (live)
+      const stopBanWatch = db.collection('users').doc(this.user.uid)
+        .onSnapshot(snap => {
+          const banned = !!snap.data()?.isBanned;
+          if (banned) {
+            alert('Dein Account wurde gesperrt. Bitte kontaktiere den Support.');
+            logout();
+          }
+        });
+      this._unsubs.push(stopBanWatch);
 
       // Notifications (live)
       const stopNoti = listenForNotifications(this.user, {
