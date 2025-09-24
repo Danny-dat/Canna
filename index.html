@@ -1,353 +1,633 @@
 <!DOCTYPE html>
 <html lang="de">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CannaTrack</title>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CANNA Track</title>
 
-    <link rel="icon" type="image/png" href="images/logo.png"> 
-    <link rel="stylesheet" href="style.css">
-    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
-    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+  <link rel="icon" type="image/png" href="images/logo.png">
+  <link rel="stylesheet" href="style.css">
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.0.0-beta3/css/all.min.css">
+
+  <!-- Vue 3 -->
+  <!-- <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script> -->
+  <script src="https://unpkg.com/vue@3/dist/vue.global.prod.js"></script>
+  <!-- Firebase 9 compat (v8 API) -->
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
+  <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
+  <!-- Leaflet -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <!-- QRCode & Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+
+  <!-- Lazy Audio Init (für Benachrichtigungston) -->
+  <script>
+    window.__audioReady = (async () => {
+      await new Promise(resolve => {
+        const once = () => { document.removeEventListener('pointerdown', once); resolve(); };
+        document.addEventListener('pointerdown', once, { once: true });
+      });
+      await new Promise((resolve, reject) => {
+        const s = document.createElement('script');
+        s.src = "https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js";
+        s.onload = resolve; s.onerror = reject; document.head.appendChild(s);
+      });
+      try { if (window.Tone) await Tone.start(); console.log("Audio ready"); return true; }
+      catch(e){ console.warn("Tone.start() failed:", e); return false; }
+    })();
+  </script>
 </head>
 <body>
-    <div id="app">
-        
-        <div v-if="!user.loggedIn" class="landing-container">
-            <img src="https://placehold.co/150x150/4CAF50/FFFFFF?text=CannaTrack" alt="CannaTrack Logo" class="logo">
-            
-            <div class="landing-form card">
-                <h2>{{ isLogin ? 'Anmelden' : 'Registrieren' }}</h2>
-                <input type="email" v-model="form.email" placeholder="E-Mail">
-                <input type="password" v-model="form.password" placeholder="Passwort">
-                
-                <template v-if="!isLogin">
-                    <input type="text" v-model="form.displayName" placeholder="Anzeigename">
-                    <input type="tel" v-model="form.phoneNumber" placeholder="Handynummer (z.B. 017612345678)">
-                </template>
-                
-                <button @click="isLogin ? login() : register()">{{ isLogin ? 'Anmelden' : 'Registrieren' }}</button>
-                <p @click="isLogin = !isLogin" class="auth-switch">
-                    {{ isLogin ? 'Noch kein Konto? Jetzt registrieren.' : 'Bereits ein Konto? Jetzt anmelden.' }}
-                </p>
+  <div id="app">
+
+    <!-- ====================== Auth (Login/Registrieren) ====================== -->
+    <div v-if="!user.loggedIn" class="landing-form card">
+      <div v-if="isLogin">
+        <img class="logo" src="images/logo.png" alt="Logo" />
+        <h2>Login</h2>
+        <input v-model="form.email" type="email" autocomplete="username" placeholder="Email">
+        <input v-model="form.password" type="password" autocomplete="current-password" placeholder="Passwort">
+        <button @click="doLogin">Login</button>
+        <p class="auth-switch"><span @click="isLogin = false">Noch kein Account? Registrieren</span></p>
+        <p class="auth-switch"><span @click="resetPasswordFlow">Passwort vergessen? Zurücksetzen</span></p>
+      </div>
+
+      <div v-else>
+        <img class="logo" src="images/logo.png" alt="Logo" />
+        <h2>Registrieren</h2>
+        <input v-model="form.email" type="email" placeholder="Email">
+        <input v-model="form.password" type="password" placeholder="Passwort">
+        <input v-model="form.displayName" type="text" placeholder="Anzeigename">
+        <input v-model="form.phoneNumber" type="tel" placeholder="Telefonnummer">
+        <button @click="doRegister">Registrieren</button>
+        <p class="auth-switch"><span @click="isLogin = true">Schon ein Konto? Zum Login</span></p>
+      </div>
+
+      <!-- Passwort-Reset Dialog -->
+      <div v-if="showReset" class="alert-overlay" @click="showReset = false">
+        <div class="alert-window" @click.stop>
+          <div class="alert-header"><h3>Passwort zurücksetzen</h3></div>
+          <div class="alert-content">
+            <p>Gib deine E-Mail ein. Du erhältst einen Link zum Zurücksetzen.</p>
+            <input type="email" v-model="resetEmail" placeholder="E-Mail" />
+            <div style="display:flex; gap:10px; margin-top:12px;">
+              <button class="btn-close-alert" @click="showReset = false">Abbrechen</button>
+              <button class="btn-save" @click="doPasswordReset">Link senden</button>
             </div>
-
-            <footer class="footer-banner">
-                <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
-            </footer>
+          </div>
         </div>
+      </div>
 
-        <div v-if="user.loggedIn" class="app-container">
-            <header class="app-header">
-                <div class="burger-menu" @click="toggleMenu">
-                    <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
-                </div>
-                <h2>CannaTrack</h2>
-                <div class="header-actions">
-                    <div class="settings-icon" @click="toggleSettings">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
-                    </div>
-                    <div class="notification-bell" @click="toggleNotifications">
-                        <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path><path d="M13.73 21a2 2 0 0 1-3.46 0"></path></svg>
-                        <span v-if="unreadNotificationsCount > 0" class="notification-badge">{{ unreadNotificationsCount }}</span>
-                        <div v-if="showNotifications" class="notifications-dropdown">
-                            <div v-if="notifications.length === 0" class="notification-item">Keine Benachrichtigungen.</div>
-                            <div v-for="noti in notifications" :key="noti.id" class="notification-item" :class="{ read: noti.read }" @click="markNotificationAsRead(noti)">
-                                <p>{{ noti.message }}</p>
-                                <small>{{ formatTimestamp(noti.timestamp) }}</small>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-            </header>
-
-            <div v-if="showMenu" class="sidebar-overlay" @click="toggleMenu">
-                <div class="sidebar-menu" @click.stop>
-                    <h3>Menü</h3>
-                    <a @click="setView('dashboard')">Dashboard</a>
-                    <a @click="setView('friends')">Freunde & Soziales</a>
-                    <a @click="setView('events')">Events</a>
-                    <a @click="setView('statistics')">Statistik</a>
-                    <a @click="setView('thcCalculator')">THC Restgehalt Rechner</a>
-                    <a @click="setView('myData')">Meine Daten</a>
-                    <hr>
-                    <a @click="setView('privacy')">Datenschutz</a>
-                    <a @click="setView('terms')">AGB</a>
-                    <hr>
-                    <a @click="logout">Abmelden</a>
-                </div>
-            </div>
-
-            <main class="main-content">
-
-                <div v-if="currentView === 'dashboard'">
-                    <div class="tracker-container card">
-                        <h3>Neuen Konsum loggen</h3>
-                        <div class="selection">
-                            <div v-for="item in products" :key="item.name" @click="selection.product = item.name" :class="{ selected: selection.product === item.name }">
-                                <img :src="item.img" :alt="item.name">
-                                <p>{{ item.name }}</p>
-                            </div>
-                        </div>
-                        <div class="selection">
-                            <div v-for="device in devices" :key="device" @click="selection.device = device" :class="{ selected: selection.device === device }">
-                                <p>{{ device }}</p>
-                            </div>
-                        </div>
-                        <button @click="logConsumption" :disabled="!selection.product || !selection.device">Bestätigen & Standort loggen</button>
-                    </div>
-                    <div class="dashboard-banner">
-                         <img :src="dashboardBanners[dashboardBannerIndex].img" :alt="dashboardBanners[dashboardBannerIndex].alt">
-                    </div>
-                     <div class="map-container card">
-                        <div class="map-header">
-                            <h3>Konsum-Karte</h3>
-                            <div class="map-controls">
-                                <label for="friend-toggle">Freunde anzeigen</label>
-                                <label class="toggle-switch">
-                                    <input type="checkbox" id="friend-toggle" v-model="showFriendsOnMap" @change="toggleFriendMarkers">
-                                    <span class="slider"></span>
-                                </label>
-                            </div>
-                        </div>
-                        <div id="map"></div>
-                    </div>
-                </div>
-
-                <div v-if="currentView === 'friends'" class="friends-container card">
-                    <h3>Freunde & Soziales</h3>
-                    <div class="user-id-section">
-                        <p>Dein Freundschaftscode:</p>
-                        <strong>{{ user.uid }}</strong>
-                        <button class="btn-share" @click="shareProfile">Code Teilen</button>
-                    </div>
-                    <hr>
-                    <h4>Freund hinzufügen</h4>
-                    <div class="add-friend">
-                        <input type="text" v-model="friendIdInput" placeholder="Freundschaftscode eingeben">
-                        <button @click="sendFriendRequest">Senden</button>
-                    </div>
-<hr>
-<h4>Offene Anfragen</h4>
-<button @click="fetchFriendRequests" class="btn-refresh-requests">Anfragen aktualisieren</button>
-
-<div v-if="friendRequests.length === 0" class="empty-state">Klicke auf "Aktualisieren", um nach neuen Anfragen zu suchen.</div>
-<div v-for="req in friendRequests" :key="req.id" class="request">
-    <span>{{ req.fromDisplayName || req.fromEmail }}</span>
-    <div class="request-buttons">
-        <button @click="acceptRequest(req)" class="btn-accept">Annehmen</button>
-        <button @click="declineRequest(req.id)" class="btn-decline">Ablehnen</button>
-    </div>
-</div>
-<hr>
-                    <h4>Deine Freunde</h4>
-                    <div v-if="friends.length === 0" class="empty-state">Noch keine Freunde hinzugefügt.</div>
-                    <div v-for="friend in friends" :key="friend.id" class="friend-item" @click="openChat(friend)">
-                        <p>{{ friend.displayName || friend.email }}</p>
-                        <span>Chat öffnen</span>
-                    </div>
-                </div>
-                
-                <div v-if="currentView === 'events'" class="events-page card">
-                    <h3>Community Events</h3>
-                    <div v-if="events.length === 0" class="empty-state">Aktuell keine Events.</div>
-                    <div class="events-container">
-                        <div v-for="event in events" :key="event.id" class="event-item">
-                            <div class="event-details">
-                                <p class="event-name">{{ event.name }}</p>
-                                <p class="event-address">{{ event.address }}</p>
-                                <div class="vote-counters">
-                                    <span><i class="fas fa-thumbs-up"></i> {{ event.upvotes?.length || 0 }}</span>
-                                    <span><i class="fas fa-thumbs-down"></i> {{ event.downvotes?.length || 0 }}</span>
-                                </div>
-                            </div>
-                            <div class="event-actions">
-                                <button @click="voteEvent(event.id, 'up')" :class="{ 'voted': event.upvotes?.includes(user.uid) }" title="Event positiv bewerten">
-                                    <i class="fas fa-thumbs-up"></i>
-                                </button>
-                                <button @click="voteEvent(event.id, 'down')" :class="{ 'voted': event.downvotes?.includes(user.uid) }" title="Event negativ bewerten">
-                                    <i class="fas fa-thumbs-down"></i>
-                                </button>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-
-                <div v-if="currentView === 'statistics'" class="stats-container card">
-                    <div class="stats-header">
-                        <h3>Wochenübersicht</h3>
-                        <div class="refresh-icon" @click="refreshStats">
-                            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
-                        </div>
-                    </div>
-                    <canvas id="consumptionChart"></canvas>
-                </div>
-
-                <div v-if="currentView === 'thcCalculator'" class="thc-calculator-page">
-                    <div class="thc-calculator-container card">
-                        <h3>THC Restgehalt Rechner</h3>
-                        <div class="calc-grid">
-                            <div class="setting-item">
-                                <label for="gender">Geschlecht</label>
-                                <select id="gender" v-model="thcCalc.gender">
-                                    <option value="male">Männlich</option>
-                                    <option value="female">Weiblich</option>
-                                </select>
-                            </div>
-                            <div class="setting-item">
-                                <label for="age">Alter</label>
-                                <input type="number" id="age" v-model.number="thcCalc.age" min="18">
-                            </div>
-                             <div class="setting-item">
-                                <label for="weight">Gewicht (kg)</label>
-                                <input type="number" id="weight" v-model.number="thcCalc.weight" min="40">
-                            </div>
-                            <div class="setting-item">
-                                <label for="bodyFat">Körperfettanteil (%)</label>
-                                <input type="number" id="bodyFat" v-model.number="thcCalc.bodyFat" min="5" max="50">
-                            </div>
-                        </div>
-
-                        <div class="setting-item">
-                            <label for="frequency">Konsumhäufigkeit</label>
-                            <select id="frequency" v-model="thcCalc.frequency">
-                                <option value="once">Einmalig / Selten</option>
-                                <option value="often">Regelmäßig (mehrmals pro Woche)</option>
-                                <option value="daily">Täglich</option>
-                            </select>
-                        </div>
-                        <hr>
-                        <div class="calc-grid">
-                            <div class="setting-item">
-                                <label for="thc-amount">Menge (g)</label>
-                                <input type="number" id="thc-amount" v-model.number="thcCalc.amount" min="0.01" step="0.01">
-                            </div>
-                            <div class="setting-item">
-                                <label for="thc-percentage">THC-Gehalt (%)</label>
-                                <input type="number" id="thc-percentage" v-model.number="thcCalc.thcPercentage" min="1" max="100">
-                            </div>
-                        </div>
-                         <div class="setting-item">
-                            <label for="last-consumption">Letzter Konsum (Datum & Uhrzeit)</label>
-                            <input type="datetime-local" id="last-consumption" v-model="thcCalc.lastConsumption">
-                        </div>
-
-                        <button @click="calculateThcAbbau" class="btn-calculate">Berechnen</button>
-
-                        <div v-if="thcCalc.result.status === 'red'" class="result-box result-box-red">
-                            <h4>Nicht Fahrtüchtig</h4>
-                            <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
-                            <p>Du solltest das Führen von Fahrzeugen unbedingt vermeiden. Warte noch ca. <strong>{{ thcCalc.result.waitTime }}</strong>, um unter den Grenzwert zu fallen.</p>
-                        </div>
-                        <div v-if="thcCalc.result.status === 'orange'" class="result-box result-box-orange">
-                            <h4>Eingeschränkt Fahrtüchtig</h4>
-                            <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
-                            <p>Dein Wert liegt in einem kritischen Bereich. Auch wenn er unter dem Grenzwert liegt, kann deine Reaktionsfähigkeit noch beeinträchtigt sein. Sei vorsichtig.</p>
-                        </div>
-                         <div v-if="thcCalc.result.status === 'green'" class="result-box result-box-green">
-                            <h4>Fahrtüchtig</h4>
-                            <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
-                            <p>Dein geschätzter Wert liegt in einem Bereich, der als unbedenklich für die Fahrtüchtigkeit angesehen wird. Fahre trotzdem nur, wenn du dich absolut fit fühlst.</p>
-                        </div>
-                    </div>
-
-                    <div class="warning-text">
-                        <p><strong>Haftungsausschluss:</strong> Die hier angezeigten Ergebnisse sind lediglich Schätzungen und basieren auf vereinfachten Modellen. Der tatsächliche Abbau von THC ist von zahlreichen individuellen Faktoren wie Stoffwechsel, Körpergewicht und Konsumhäufigkeit abhängig. Diese Berechnung ist nicht rechtsverbindlich und sollte nicht zur Beurteilung der Fahrtüchtigkeit oder für medizinische Zwecke verwendet werden.</p>
-                    </div>
-                    <div class="footer-banner">
-                        <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
-                    </div>
-                </div>
-                
-                <div v-if="currentView === 'myData'" class="my-data-container card">
-                    <h3>Meine Daten & Personalisierung</h3>
-                    <div class="setting-item">
-                        <label for="display-name">Anzeigename</label>
-                        <input type="text" id="display-name" v-model="userData.displayName">
-                    </div>
-                    <div class="setting-item">
-                        <label for="phone-number">Handynummer</label>
-                        <input type="tel" id="phone-number" v-model="userData.phoneNumber">
-                    </div>
-                    <hr>
-                    <h4>Design</h4>
-                    <div class="setting-item">
-                        <label>Farbschema</label>
-                        <div class="theme-selector">
-                            <button :class="{ active: userData.theme === 'light' }" @click="userData.theme = 'light'">Hell</button>
-                            <button :class="{ active: userData.theme === 'dark' }" @click="userData.theme = 'dark'">Dunkel</button>
-                        </div>
-                    </div>
-                    <button @click="saveUserData" class="btn-save">Änderungen speichern</button>
-                </div>
-                
-                <div v-if="currentView === 'privacy'" class="placeholder-card card">
-                    <h3>Datenschutz</h3>
-                    <p>Hier werden bald die Datenschutzbestimmungen stehen.</p>
-                </div>
-                <div v-if="currentView === 'terms'" class="placeholder-card card">
-                    <h3>Geschäftsbedingungen</h3>
-                    <p>Hier werden bald die AGB stehen.</p>
-                </div>
-
-            </main>
-        </div>
-        
-        <div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
-            <div class="chat-window" @click.stop>
-                <div class="chat-header">
-                    <h3>Chat mit {{ activeChat.partner.displayName || activeChat.partner.email }}</h3>
-                    <button @click="closeChat" class="btn-close-chat">&times;</button>
-                </div>
-                <div class="chat-messages">
-                    <div v-for="message in activeChat.messages" :key="message.id" class="message-bubble" :class="{ 'sent': message.senderId === user.uid, 'received': message.senderId !== user.uid }">
-                        <p>{{ message.text }}</p>
-                    </div>
-                </div>
-                <div class="chat-input">
-                    <input type="text" v-model="chatMessageInput" @keyup.enter="sendMessage" placeholder="Nachricht...">
-                    <button @click="sendMessage">→</button>
-                </div>
-            </div>
-        </div>
-        <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
-            <div class="settings-window" @click.stop>
-                <div class="settings-header">
-                    <h3>Einstellungen</h3>
-                    <button @click="toggleSettings" class="btn-close-settings">&times;</button>
-                </div>
-                <div class="settings-content">
-                    <div class="setting-item">
-                        <label for="daily-limit">Tägliches Konsumlimit</label>
-                        <input type="number" id="daily-limit" v-model.number="settings.consumptionThreshold" min="1">
-                    </div>
-                    <button @click="saveUserSettings" class="btn-save">Speichern</button>
-                </div>
-            </div>
-        </div>
-        <div v-if="showAlert" class="alert-overlay">
-            <div class="alert-window" @click.stop>
-                <div class="alert-header">
-                    <h3>Warnung</h3>
-                </div>
-                <div class="alert-content">
-                    <p>{{ alertMessage }}</p>
-                    <button @click="closeAlert" class="btn-close-alert">Schließen</button>
-                </div>
-            </div>
-        </div>
-        
+      <footer class="footer-banner">
+        <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
+      </footer>
     </div>
 
-    <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/9.6.1/firebase-firestore-compat.js"></script>
-    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/qrcode@1.5.1/build/qrcode.min.js"></script>
-    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/tone/14.7.77/Tone.js"></script>
+    <!-- ============================ App (nach Login) ============================ -->
+    <div v-if="user.loggedIn" class="app-container">
+      <header class="app-header">
+        <div class="burger-menu" @click="toggleMenu">
+          <svg xmlns="http://www.w3.org/2000/svg" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="3" y1="12" x2="21" y2="12"></line><line x1="3" y1="6" x2="21" y2="6"></line><line x1="3" y1="18" x2="21" y2="18"></line></svg>
+        </div>
+        <h2>CannaTrack</h2>
 
-    <script src="app.js"></script>
+        <div class="header-actions">
+          <div class="settings-icon" @click="toggleSettings" title="Einstellungen">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"></circle><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"></path></svg>
+          </div>
+
+          <!-- Benachrichtigungen -->
+          <div class="notification-bell bell-btn" ref="bellWrap" @click.stop="toggleNotifications" aria-label="Benachrichtigungen" title="Benachrichtigungen">
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24"
+                 viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                 stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+              <path d="M18 8A6 6 0 0 0 6 8c0 7-3 9-3 9h18s-3-2-3-9"></path>
+              <path d="M13.73 21a2 2 0 0 1-3.46 0"></path>
+            </svg>
+            <span v-if="unreadNotificationsCount > 0" class="notification-badge">{{ unreadNotificationsCount }}</span>
+
+            <div v-if="showNotifications" class="notifications-dropdown" @click.stop>
+              <div v-if="notifications.length === 0" class="notification-item">Keine Benachrichtigungen.</div>
+              <div v-for="noti in notifications" :key="noti.id"
+                   class="notification-item" :class="{ read: noti.read }"
+                   @click="handleNotificationClick(noti)">
+                <p>{{ noti.message }}</p>
+                <small>{{ formatTimestamp(noti.timestamp) }}</small>
+                <button v-if="!noti.read" class="mark-read" @click.stop="markNotificationAsRead(noti)">Gelesen</button>
+              </div>
+            </div>
+          </div>
+
+          <p>{{ userData.displayName || user.email }}</p>
+        </div>
+      </header>
+
+      <!-- Sidebar -->
+      <div v-if="showMenu" class="sidebar-overlay" @click="toggleMenu">
+        <div class="sidebar-menu" @click.stop>
+          <h3>Menü</h3>
+          <a @click="setView('dashboard')">Dashboard</a>
+          <a @click="setView('globalChat')">Globaler Chat</a>
+          <a @click="setView('friends')">Freunde & Soziales</a>
+          <a @click="setView('events')">Events</a>
+          <a @click="setView('statistics')">Statistik</a>
+          <a @click="setView('thcCalculator')">THC Rechner</a>
+          <a @click="setView('myData')">Meine Daten</a>
+          <a v-if="isAdmin" @click="setView('admin')">Admin Bereich</a>
+          <hr>
+          <a @click="setView('privacy')">Datenschutz</a>
+          <a @click="setView('terms')">AGB</a>
+          <hr>
+          <a @click="doLogout">Abmelden</a>
+        </div>
+      </div>
+
+      <!-- ============================ Main Content ============================ -->
+      <main class="main-content">
+
+        <!-- Dashboard -->
+        <div v-if="currentView === 'dashboard'">
+          <div class="tracker-container card">
+            <h3>Neuen Konsum loggen</h3>
+
+            <div class="selection">
+              <div v-for="item in products" :key="item.name"
+                   @click="selection.product = item.name"
+                   :class="{ selected: selection.product === item.name }">
+                <img :src="item.img" :alt="item.name">
+                <p>{{ item.name }}</p>
+              </div>
+            </div>
+
+            <div class="selection">
+              <div v-for="device in devices" :key="device"
+                   @click="selection.device = device"
+                   :class="{ selected: selection.device === device }">
+                <p>{{ device }}</p>
+              </div>
+            </div>
+
+            <button @click="logConsumption" :disabled="!selection.product || !selection.device">
+              Bestätigen & Standort loggen
+            </button>
+          </div>
+
+          <div class="dashboard-banner">
+            <img :src="dashboardBanners[dashboardBannerIndex].img" :alt="dashboardBanners[dashboardBannerIndex].alt">
+          </div>
+
+          <div class="map-container card">
+            <div class="map-header">
+              <h3>Konsum-Karte</h3>
+              <div class="map-controls">
+                <label for="friend-toggle">Freunde anzeigen</label>
+                <label class="toggle-switch">
+                  <input type="checkbox" id="friend-toggle" v-model="showFriendsOnMap" @change="toggleFriendMarkers">
+                  <span class="slider"></span>
+                </label>
+              </div>
+            </div>
+            <div id="map"></div>
+          </div>
+        </div>
+
+        <!-- Global Chat -->
+        <div v-if="currentView === 'globalChat'" class="card">
+          <h3>Globaler Chat</h3>
+          <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages" style="height:50vh; overflow:auto;">
+            <div v-for="m in globalChat.messages" :key="m.id"
+                class="message-bubble"
+                :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
+              <div class="message-meta">
+                <strong class="sender">{{ m.senderName }}</strong>
+                <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
+              </div>
+              <p class="body">{{ m.text }}</p>
+            </div>
+          </div>
+          <div class="chat-input">
+            <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
+                  placeholder="Nachricht…" ref="globalChatInput" />
+            <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
+                  aria-label="Senden" title="Senden">
+                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                    <path d="M22 2L11 13"></path>
+                    <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
+                  </svg>
+            </button>
+          </div>
+        </div>
+
+        <!-- Friends -->
+        <div v-if="currentView === 'friends'" class="friends-container card">
+          <h3>Freunde & Soziales</h3>
+          <div class="user-id-section">
+            <p>Dein Freundschaftscode:</p>
+            <strong>{{ user.uid }}</strong>
+
+            <!-- share menu -->
+            <div class="btn-share-wrap" ref="shareWrap" style="position:relative; display:inline-block;">
+              <button class="btn-share" @click.stop="openShareMenu">Code teilen</button>
+
+              <div v-if="shareMenuOpen" class="share-menu" @click.stop
+                  style="position:absolute; z-index:20; right:0; top:110%; min-width:180px;">
+                <button class="share-item" @click="shareCopy">📋 Kopieren</button>
+                <button class="share-item" @click="shareNative">📤 Teilen…</button>
+                <button class="share-item" @click="shareQR">🔳 QR anzeigen</button>
+              </div>
+            </div>
+          </div>
+          <hr>
+          <h4>Freund hinzufügen</h4>
+          <div class="add-friend">
+            <input type="text" v-model="friendIdInput" placeholder="Freundschaftscode eingeben">
+            <button @click="actionSendFriendRequest">Senden</button>
+          </div>
+          <hr>
+          <h4>Offene Anfragen</h4>
+          <button @click="actionFetchFriendRequests" class="btn-refresh-requests">Anfragen aktualisieren</button>
+
+          <div v-if="friendRequests.length === 0" class="empty-state">Klicke auf „Aktualisieren“, um nach neuen Anfragen zu suchen.</div>
+          <div v-for="req in friendRequests" :key="req.id" class="request">
+            <span>{{ req.fromDisplayName || req.fromEmail }}</span>
+            <div class="request-buttons">
+              <button @click="acceptRequest(req)" class="btn-accept">Annehmen</button>
+              <button @click="declineRequest(req.id)" class="btn-decline">Ablehnen</button>
+            </div>
+          </div>
+          <hr>
+          <h4>Deine Freunde</h4>
+          <div v-if="friends.length === 0" class="empty-state">Noch keine Freunde hinzugefügt.</div>
+          <div v-for="friend in friends" :key="friend.id" class="friend-item">
+            <fieldset>
+              <div class="friend-main" @click="openChat(friend)">
+                <p>{{ friend.username || friend.displayName || friend.label || friend.id }}</p>
+                <span>Chat öffnen</span>
+              </div>
+                <div class="friend-actions">
+                  <select
+                    class="action-select"
+                    v-model="friend._action"
+                    @change.stop="handleFriendAction(friend)"
+                  >
+                    <option disabled value="">User Aktionen</option>
+                    <option value="remove">Freund entfernen</option>
+                    <option value="block">Blockieren</option>
+                    <option value="unblock">Entblocken</option>
+                  </select>
+                </div>
+            </fieldset>
+          </div>
+        </div>
+
+        <!-- Events -->
+        <div v-if="currentView === 'events'" class="events-page card">
+          <h3>Community Events</h3>
+          <div v-if="events.length === 0" class="empty-state">Aktuell keine Events.</div>
+          <div class="events-container">
+            <div v-for="event in events" :key="event.id" class="event-item">
+              <div class="event-details">
+                <p class="event-name">{{ event.name }}</p>
+                <p class="event-address">{{ event.address }}</p>
+                <div class="vote-counters">
+                  <span><i class="fas fa-thumbs-up"></i> {{ event.upvotes?.length || 0 }}</span>
+                  <span><i class="fas fa-thumbs-down"></i> {{ event.downvotes?.length || 0 }}</span>
+                </div>
+              </div>
+              <div class="event-actions">
+                <button @click="voteEvent(event.id, 'up')" :class="{ 'voted': event.upvotes?.includes(user.uid) }" title="Event positiv bewerten">
+                  <i class="fas fa-thumbs-up"></i>
+                </button>
+                <button @click="voteEvent(event.id, 'down')" :class="{ 'voted': event.downvotes?.includes(user.uid) }" title="Event negativ bewerten">
+                  <i class="fas fa-thumbs-down"></i>
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Statistics -->
+        <div v-if="currentView === 'statistics'" class="stats-container card">
+          <div class="stats-header">
+            <h3>Wochenübersicht</h3>
+            <div class="refresh-icon" @click="refreshStats" title="Aktualisieren">
+              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            </div>
+          </div>
+          <canvas id="consumptionChart"></canvas>
+        </div>
+
+        <!-- THC Calculator -->
+        <div v-if="currentView === 'thcCalculator'" class="thc-calculator-page">
+          <div class="thc-calculator-container card">
+            <h3>THC Restgehalt Rechner</h3>
+            <div class="calc-grid">
+              <div class="setting-item">
+                <label for="gender">Geschlecht</label>
+                <select id="gender" v-model="thcCalc.gender">
+                  <option value="male">Männlich</option>
+                  <option value="female">Weiblich</option>
+                </select>
+              </div>
+              <div class="setting-item">
+                <label for="age">Alter</label>
+                <input type="number" id="age" v-model.number="thcCalc.age" min="18">
+              </div>
+              <div class="setting-item">
+                <label for="weight">Gewicht (kg)</label>
+                <input type="number" id="weight" v-model.number="thcCalc.weight" min="40">
+              </div>
+              <div class="setting-item">
+                <label for="bodyFat">Körperfettanteil (%)</label>
+                <input type="number" id="bodyFat" v-model.number="thcCalc.bodyFat" min="5" max="50">
+              </div>
+            </div>
+
+            <div class="setting-item">
+              <label for="frequency">Konsumhäufigkeit</label>
+              <select id="frequency" v-model="thcCalc.frequency">
+                <option value="once">Einmalig / Selten</option>
+                <option value="often">Regelmäßig (mehrmals pro Woche)</option>
+                <option value="daily">Täglich</option>
+              </select>
+            </div>
+            <hr>
+            <div class="calc-grid">
+              <div class="setting-item">
+                <label for="thc-amount">Menge (g)</label>
+                <input type="number" id="thc-amount" v-model.number="thcCalc.amount" min="0.01" step="0.01">
+              </div>
+              <div class="setting-item">
+                <label for="thc-percentage">THC-Gehalt (%)</label>
+                <input type="number" id="thc-percentage" v-model.number="thcCalc.thcPercentage" min="1" max="100">
+              </div>
+            </div>
+            <div class="setting-item">
+              <label for="last-consumption">Letzter Konsum (Datum & Uhrzeit)</label>
+              <input type="datetime-local" id="last-consumption" v-model="thcCalc.lastConsumption">
+            </div>
+
+            <button @click="calculateThcAbbau" class="btn-calculate">Berechnen</button>
+
+            <div v-if="thcCalc.result.status === 'red'" class="result-box result-box-red">
+              <h4>Nicht Fahrtüchtig</h4>
+              <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
+              <p>Warte noch ca. <strong>{{ thcCalc.result.waitTime }}</strong>, um unter den Grenzwert zu fallen.</p>
+            </div>
+            <div v-if="thcCalc.result.status === 'orange'" class="result-box result-box-orange">
+              <h4>Eingeschränkt Fahrtüchtig</h4>
+              <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
+              <p>Achte auf dein Empfinden; Reaktionsfähigkeit kann eingeschränkt sein.</p>
+            </div>
+            <div v-if="thcCalc.result.status === 'green'" class="result-box result-box-green">
+              <h4>Fahrtüchtig</h4>
+              <p>Geschätzter Wert: <strong>{{ thcCalc.result.value }} ng/ml</strong></p>
+              <p>Dein geschätzter Wert liegt in einem Bereich, der als unbedenklich für die Fahrtüchtigkeit angesehen wird. Fahre trotzdem nur, wenn du dich absolut fit fühlst.</p>
+            </div>
+          </div>
+
+          <div class="warning-text">
+              <p><strong>Haftungsausschluss:</strong> Die hier angezeigten Ergebnisse sind lediglich Schätzungen und basieren auf vereinfachten Modellen. Der tatsächliche Abbau von THC ist von zahlreichen individuellen Faktoren wie Stoffwechsel, Körpergewicht und Konsumhäufigkeit abhängig. Diese Berechnung ist nicht rechtsverbindlich und sollte nicht zur Beurteilung der Fahrtüchtigkeit oder für medizinische Zwecke verwendet werden.</p>
+          </div>
+          <div class="footer-banner">
+            <img :src="landingBanners[landingBannerIndex].img" :alt="landingBanners[landingBannerIndex].alt">
+          </div>
+        </div>
+
+        <!-- Admin Bereich -->
+        <div v-if="currentView === 'admin' && isAdmin" class="admin-container card">
+          <h3>Admin Bereich</h3>
+            <p>Verwaltung von Events, Nutzern, Bannern und Statistiken</p>
+
+            <!-- Tabs -->
+            <div style="display:flex; gap:8px; margin-bottom:12px;">
+              <button @click="admin.tab='events'"  :class="{active: admin.tab==='events'}">Events</button>
+              <button @click="admin.tab='users'"   :class="{active: admin.tab==='users'}">Nutzer</button>
+              <button @click="admin.tab='banners'" :class="{active: admin.tab==='banners'}">Werbung</button>
+              <button @click="admin.tab='stats'"   :class="{active: admin.tab==='stats'}">Statistik</button>
+            </div>
+
+            <!-- Events -->
+            <div v-if="admin.tab==='events'">
+              <h4>Events verwalten</h4>
+              <div style="display:grid; gap:8px; grid-template-columns: 1fr 1fr;">
+                <input v-model="adminEventForm.name" placeholder="Name">
+                <input v-model="adminEventForm.address" placeholder="Adresse">
+                <input v-model.number="adminEventForm.lat" type="number" step="0.0001" placeholder="Lat">
+                <input v-model.number="adminEventForm.lng" type="number" step="0.0001" placeholder="Lng">
+                <button @click="adminCreateEvent">Event anlegen</button>
+              </div>
+              <hr>
+              <div v-for="e in admin.events" :key="e.id" class="event-item">
+                <div>
+                  <p class="event-name">{{ e.name }}</p>
+                  <p class="event-address">{{ e.address }}</p>
+                  <small>Votes: 👍 {{ e.upvotes?.length||0 }} / 👎 {{ e.downvotes?.length||0 }}</small>
+                </div>
+                <div class="event-actions">
+                  <button @click="adminDeleteEvent(e)">Löschen</button>
+                </div>
+              </div>
+            </div>
+
+            <!-- Users -->
+            <div v-if="admin.tab==='users'" class="card">
+              <h4>Nutzer (öffentliches Profil)</h4>
+
+              <!-- (deine Toolbar oben kann bleiben: Suche/Sortierung/Pagination) -->
+
+              <div
+                v-for="u in adminUsersPageItems"
+                :key="u.id"
+                class="user-row"
+                style="display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding:8px 0; flex-wrap:wrap;"
+              >
+                <div style="flex:1; min-width:220px;">
+                  <strong>
+                    {{ u.displayName || u.username || u.id }}
+                    <span v-if="u._banned" style="font-size:11px; padding:2px 6px; margin-left:6px; border-radius:10px; background:var(--danger-bg,#fee); color:var(--danger-fg,#900);">
+                      gesperrt
+                    </span>
+                  </strong>
+                  <div style="font-size:12px; color:var(--text-muted-color);">
+                    ID: {{ u.id }}
+                    <span v-if="u._email"> · {{ u._email }}</span>
+                  </div>
+                </div>
+
+                <input
+                  v-model="u.displayName"
+                  placeholder="Display Name"
+                  style="max-width:240px; flex:0 1 240px;"
+                >
+
+                <!-- EIN Dropdown für alle Aktionen -->
+                <select
+                  class="action-select"
+                  v-model="u._action"
+                  @change="handleUserAction(u)"
+                  style="flex:0 0 180px;"
+                >
+                  <option value="" disabled selected>Aktion wählen…</option>
+                  <option value="save">Name speichern</option>
+                  <option :disabled="!u._email" value="reset">Passwort-Reset senden</option>
+                  <option v-if="!u._banned" value="ban">Sperren</option>
+                  <option v-else value="unban">Entsperren</option>
+                  <option value="wipe">Daten löschen</option>
+                </select>
+              </div>
+
+              <!-- Pagination unten (wie gehabt) -->
+              <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
+                <button @click="adminPrevPage" :disabled="admin.usersPage<=1">Zurück</button>
+                <span>Seite {{ admin.usersPage }} / {{ adminUsersTotalPages }}</span>
+                <button @click="adminNextPage" :disabled="admin.usersPage>=adminUsersTotalPages">Weiter</button>
+              </div>
+            </div>
+
+            <!-- Banners -->
+            <div v-if="admin.tab==='banners'">
+              <h4>Werbebanner</h4>
+              <div style="display:grid; gap:8px; grid-template-columns: repeat(5, 1fr); align-items:center;">
+                <input v-model="bannerForm.slot" placeholder="slot (landing|dashboard)">
+                <input v-model="bannerForm.imageUrl" placeholder="imageUrl">
+                <input v-model="bannerForm.alt" placeholder="alt">
+                <input v-model.number="bannerForm.order" type="number" placeholder="order">
+                <button @click="adminCreateBanner">Banner anlegen</button>
+              </div>
+              <hr>
+              <div v-for="b in admin.banners" :key="b.id" style="display:flex; gap:10px; align-items:center; border-bottom:1px solid var(--border-color); padding:6px 0;">
+                <img :src="b.imageUrl" alt="" style="width:80px; height:40px; object-fit:cover; border-radius:6px;">
+                <div style="flex:1;">
+                  <div><strong>{{ b.slot }}</strong> · Order: {{ b.order }}</div>
+                  <div style="font-size:12px; color:var(--text-muted-color);">{{ b.alt }}</div>
+                </div>
+                <button @click="adminDeleteBanner(b)">Löschen</button>
+              </div>
+            </div>
+
+            <!-- Stats -->
+            <div v-if="admin.tab==='stats'">
+              <h4>Anonyme Statistik (global)</h4>
+              <p>Gesamt Einträge: <strong>{{ admin.aggregates.total }}</strong></p>
+
+              <h5>Nach Produkt</h5>
+              <ul>
+                <li v-for="p in admin.aggregates.byProduct" :key="p.id">{{ p.id }}: {{ p.count }}</li>
+              </ul>
+
+              <h5>Nach Gerät</h5>
+              <ul>
+                <li v-for="d in admin.aggregates.byDevice" :key="d.id">{{ d.id }}: {{ d.count }}</li>
+              </ul>
+
+              <h5>Produkt × Gerät</h5>
+              <ul>
+                <li v-for="pd in admin.aggregates.byPair" :key="pd.id">{{ pd.id }}: {{ pd.count }}</li>
+              </ul>
+
+              <button @click="adminRefreshAggregates">Aktualisieren</button>
+              <button @click="adminExportAggregatesCsv">Als CSV exportieren</button>
+            </div>
+          </div>
+
+        <!-- Meine Daten -->
+        <div v-if="currentView === 'myData'" class="my-data-container card">
+          <h3>Meine Daten & Personalisierung</h3>
+          <div class="setting-item">
+            <label for="display-name">Anzeigename</label>
+            <input type="text" id="display-name" v-model="userData.displayName">
+          </div>
+          <div class="setting-item">
+            <label for="phone-number">Handynummer</label>
+            <input type="tel" id="phone-number" v-model="userData.phoneNumber">
+          </div>
+          <hr>
+          <h4>Design</h4>
+          <div class="setting-item">
+            <label>Farbschema</label>
+            <div class="theme-selector">
+              <button :class="{ active: userData.theme === 'light' }" @click="userData.theme = 'light'">Hell</button>
+              <button :class="{ active: userData.theme === 'dark' }" @click="userData.theme = 'dark'">Dunkel</button>
+            </div>
+          </div>
+          <button @click="saveUserData" class="btn-save">Änderungen speichern</button>
+        </div>
+
+        <!-- Statische Seiten -->
+        <div v-if="currentView === 'privacy'" class="placeholder-card card">
+          <h3>Datenschutz</h3>
+          <p>Hier werden bald die Datenschutzbestimmungen stehen.</p>
+        </div>
+        <div v-if="currentView === 'terms'" class="placeholder-card card">
+          <h3>Geschäftsbedingungen</h3>
+          <p>Hier werden bald die AGB stehen.</p>
+        </div>
+      </main>
+    </div>
+
+    <!-- Chat Overlay -->
+    <div v-if="activeChat.partner" class="chat-overlay" @click="closeChat">
+      <div class="chat-window" @click.stop>
+        <div class="chat-header">
+          <h3>
+            Chat mit
+            {{ activeChat.partner.username || activeChat.partner.displayName || activeChat.partner.label || activeChat.partner.email || activeChat.partner.id }}
+          </h3>
+          <button @click="closeChat" class="btn-close-chat">&times;</button>
+        </div>
+        <div id="chatMessages" ref="chatMessages" class="chat-messages">
+          <div v-for="m in activeChat.messages" :key="m.id"
+               class="message-bubble"
+               :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
+            <p>{{ m.text }}</p>
+          </div>
+        </div>
+        <div class="chat-input">
+          <input type="text" v-model="chatMessageInput" @keyup.enter.exact="sendMessage" placeholder="Nachricht…" ref="chatInput" />
+          <button :disabled="!chatMessageInput?.trim()" @click="sendMessage" aria-label="Senden" title="Senden">
+            <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 2L11 13"></path><path d="M22 2l-7 20-4-9-9-4 20-7z"></path></svg>
+          </button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Settings Overlay -->
+    <div v-if="showSettings" class="settings-overlay" @click="toggleSettings">
+      <div class="settings-window" @click.stop>
+        <div class="settings-header">
+          <h3>Einstellungen</h3>
+          <button @click="toggleSettings" class="btn-close-settings">&times;</button>
+        </div>
+        <div class="settings-content">
+          <div class="setting-item">
+            <label for="daily-limit">Tägliches Konsumlimit</label>
+            <input type="number" id="daily-limit" v-model.number="settings.consumptionThreshold" min="1">
+          </div>
+          <button @click="saveUserSettings" class="btn-save">Speichern</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Alert -->
+    <div v-if="showAlert" class="alert-overlay">
+      <div class="alert-window" @click.stop>
+        <div class="alert-header"><h3>Warnung</h3></div>
+        <div class="alert-content">
+          <p>{{ alertMessage }}</p>
+          <button @click="closeAlert" class="btn-close-alert">Schließen</button>
+        </div>
+      </div>
+    </div>
+
+  </div><!-- /#app -->
+
+  <!-- App Script -->
+  <script type="module" src="./js/app.js"></script>
 </body>
 </html>
