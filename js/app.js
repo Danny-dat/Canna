@@ -180,7 +180,7 @@ const app = createApp({
         this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
-        startPresenceHeartbeat(user.uid, 10000); // alle 10s (sicher < threshold 20s)
+        startPresenceHeartbeat(user.uid, 500);
         if (this.isAdmin) await this.initAdminFeature(user);
       } else {
         stopPresenceHeartbeat();

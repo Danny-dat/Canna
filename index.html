@@ -196,50 +196,50 @@
 <!------------------------------------------------------------------------------------------------------------------------->
 <!-------------------------------------------- Global Chat ---------------------------------------------------------------->
 <!------------------------------------------------------------------------------------------------------------------------->
-<div v-if="currentView === 'globalChat'" class="card">
-  <h3>Globaler Chat</h3>
+      <div v-if="currentView === 'globalChat'" class="card">
+        <h3>Globaler Chat</h3>
 
-  <div class="online-users-container">
-    <h4>Online ({{ onlineUsers.length }})</h4>
-    <div class="user-list">
-      <div v-if="onlineUsers.length === 0" style="color: var(--text-muted-color); font-size: 14px;">
-        Niemand sonst online
+        <div class="online-users-container">
+          <h4>Online ({{ onlineUsers.length }})</h4>
+          <div class="user-list">
+            <div v-if="onlineUsers.length === 0" style="color: var(--text-muted-color); font-size: 14px;">
+              Niemand sonst online
+            </div>
+            <span v-for="user in onlineUsers" :key="user.id" class="user-pill">
+              {{ user.displayName }}
+            </span>
+          </div>
+        </div>
+
+        <div class="rotating-banner-placeholder">
+          <p>Hier könnte Ihre Werbung rotieren</p>
+        </div>
+
+        <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages global-chat-messages">
+          <div v-for="m in globalChat.messages" :key="m.id"
+              class="message-bubble"
+              :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
+            <div class="message-meta">
+              <strong class="sender">{{ m.senderName }}</strong>
+              <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
+            </div>
+            <p class="body">{{ m.text }}</p>
+          </div>
+        </div>
+        <div class="chat-input">
+          <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
+                placeholder="Nachricht…" ref="globalChatInput" />
+          <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
+                aria-label="Senden" title="Senden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 2L11 13"></path>
+                  <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
+                </svg>
+          </button>
+        </div>
       </div>
-      <span v-for="user in onlineUsers" :key="user.id" class="user-pill">
-        {{ user.displayName }}
-      </span>
-    </div>
-  </div>
-
-  <div class="rotating-banner-placeholder">
-    <p>Hier könnte Ihre Werbung rotieren</p>
-  </div>
-
-  <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages global-chat-messages">
-    <div v-for="m in globalChat.messages" :key="m.id"
-        class="message-bubble"
-        :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
-      <div class="message-meta">
-        <strong class="sender">{{ m.senderName }}</strong>
-        <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
-      </div>
-      <p class="body">{{ m.text }}</p>
-    </div>
-  </div>
-  <div class="chat-input">
-    <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
-          placeholder="Nachricht…" ref="globalChatInput" />
-    <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
-          aria-label="Senden" title="Senden">
-          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
-            viewBox="0 0 24 24" fill="none" stroke="currentColor"
-            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <path d="M22 2L11 13"></path>
-            <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
-          </svg>
-    </button>
-  </div>
-</div>
 
         <!-- Friends -->
         <div v-if="currentView === 'friends'" class="friends-container card">
