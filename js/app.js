@@ -51,6 +51,11 @@ import {
   setGlobalChatActive,
 } from "./services/presence.service.js";
 
+//---- Konfiguration ----
+// Admin-UIDs, die im Global-Online-User-Feature NICHT angezeigt werden (z.B. deine eigene)
+const HIDE_FROM_GLOBAL_ONLINE = new Set([
+  "ZAz0Bnde5zYIS8qCDT86aOvEDX52", // <- deine Admin-UID
+]);
 // ---- App ----
 const app = createApp({
   mixins: [adminMixin],
@@ -421,8 +426,10 @@ const app = createApp({
 
       // Listener für Online-Benutzer starten
       const stopOnlineUsersListener = listenForOnlineUsers((users) => {
-        this.onlineUsers = users.filter((u) => u.id !== this.user.uid);
-      });
+        this.onlineUsers = users
+          .filter(u => u.id !== this.user.uid)                       // eigenen User ausblenden
+          .filter(u => !HIDE_FROM_GLOBAL_ONLINE.has(u.id));          // Admin ausblenden
+      }, 2);
       this._unsubs.push(stopOnlineUsersListener);
 
       // Map
