@@ -81,3 +81,20 @@ export async function stopPresenceHeartbeat() {
     _uid = null;
   }
 }
+
+// zeigt an, ob der Nutzer gerade im Global-Chat ist
+export async function setGlobalChatActive(uid, isActive) {
+  if (!uid) return;
+  try {
+    await db.collection("presence").doc(uid).set(
+      {
+        activeGlobalChat: !!isActive,
+        heartbeatAt: TS(),
+        lastSeenAt: TS(),
+      },
+      { merge: true }
+    );
+  } catch (e) {
+    console.warn("[presence] setGlobalChatActive failed:", e);
+  }
+}

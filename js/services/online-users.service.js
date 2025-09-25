@@ -1,3 +1,4 @@
+// services/online-users.service.js
 import { db } from './firebase-config.js';
 
 /**
@@ -5,9 +6,9 @@ import { db } from './firebase-config.js';
  * deren heartbeatAt jünger als thresholdSeconds ist.
  */
 export function listenForOnlineUsers(cb, thresholdSeconds = 20) {
-  const presenceRef = db.collection("presence");
+  const presenceRef = db.collection("presence")
+                        .where("activeGlobalChat", "==", true);
 
-  // Live-Snapshot auf "presence"
   return presenceRef.onSnapshot(async (snapshot) => {
     try {
       const now = Date.now();
@@ -15,13 +16,14 @@ export function listenForOnlineUsers(cb, thresholdSeconds = 20) {
         .map(d => {
           const data = d.data() || {};
           const hb = data.heartbeatAt?.toDate?.() || data.heartbeatAt || null;
+          // nur frische Heartbeats
           return (hb && (now - new Date(hb).getTime()) / 1000 <= thresholdSeconds) ? d.id : null;
         })
         .filter(Boolean);
 
       if (onlineUserIds.length === 0) return cb([]);
 
-      // IDs in 10er-Blöcke splitten (Firestore-Limit)
+      // chunking (max 10 IDs pro in-Query)
       const chunks = [];
       for (let i = 0; i < onlineUserIds.length; i += 10) {
         chunks.push(onlineUserIds.slice(i, i + 10));
@@ -34,12 +36,12 @@ export function listenForOnlineUsers(cb, thresholdSeconds = 20) {
         allDocs.push(...snap.docs);
       }
 
-      const onlineUsers = allDocs.map(doc => ({
+      const users = allDocs.map(doc => ({
         id: doc.id,
-        displayName: doc.data()?.displayName || `User-${doc.id.slice(0, 4)}`
+        displayName: doc.data()?.displayName || `User-${doc.id.slice(0,4)}`
       }));
 
-      cb(onlineUsers);
+      cb(users);
     } catch (e) {
       console.error("listenForOnlineUsers failed:", e);
       cb([]);

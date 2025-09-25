@@ -39,9 +39,17 @@ import { createChatFeature } from "./features/chat.js";
 import { createGlobalChatFeature } from "./features/global-chat.js";
 import { db } from "./services/firebase-config.js";
 // WICHTIG: Die folgenden zwei Zeilen sind die einzigen Import-Änderungen gegenüber deinem Original
-import { loadAdvancedConsumptionStats, renderChart } from "./services/statistics.service.js";
+import {
+  loadAdvancedConsumptionStats,
+  renderChart,
+} from "./services/statistics.service.js";
 import { listenForOnlineUsers } from "./services/online-users.service.js";
-import { startPresenceHeartbeat, stopPresenceHeartbeat, setActiveChat } from "./services/presence.service.js";
+import {
+  startPresenceHeartbeat,
+  stopPresenceHeartbeat,
+  setActiveChat,
+  setGlobalChatActive,
+} from "./services/presence.service.js";
 
 // ---- App ----
 const app = createApp({
@@ -141,7 +149,7 @@ const app = createApp({
       showFriendsOnMap: false,
       consumptionChart: null,
       // NEUE DATEN FÜR DIE STATISTIK
-      statsTimeRange: 'week',
+      statsTimeRange: "week",
       statsRankings: {
         byProduct: [],
         byDevice: [],
@@ -164,20 +172,20 @@ const app = createApp({
       if (user) {
         // --- BAN-CHECK ---
         try {
-          const uSnap = await db.collection('users').doc(user.uid).get();
+          const uSnap = await db.collection("users").doc(user.uid).get();
           const isBanned = !!uSnap.data()?.isBanned;
           if (isBanned) {
-            alert('Dein Account ist gesperrt. Bitte kontaktiere den Support.');
+            alert("Dein Account ist gesperrt. Bitte kontaktiere den Support.");
             await logout();
             return;
           }
         } catch (e) {
-          console.warn('[ban-check] users/{uid} read failed:', e);
+          console.warn("[ban-check] users/{uid} read failed:", e);
         }
         // --- /BAN-CHECK ---
 
         this.user = { loggedIn: true, uid: user.uid, email: user.email };
-        this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
+        this.isAdmin = user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52";
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
         startPresenceHeartbeat(user.uid, 500);
@@ -190,7 +198,7 @@ const app = createApp({
         applyTheme("light");
       }
     });
-    
+
     this.startBannerRotation();
 
     this._onDocClick = (e) => {
@@ -234,22 +242,26 @@ const app = createApp({
     },
 
     setView(view) {
+      // wenn wir den Global-Chat verlassen, Flag ausschalten
+      if (this.currentView === "globalChat" && view !== "globalChat") {
+        setGlobalChatActive(this.user.uid, false);
+        this.globalChatFx?.teardown();
+      }
       if (this.currentView === "dashboard" && view !== "dashboard") {
         this.mapFx?.teardown();
-      }
-      if (this.currentView === "globalChat" && view !== "globalChat") {
-        this.globalChatFx?.teardown();
       }
 
       this.currentView = view;
       this.showMenu = false;
 
       this.$nextTick(() => {
-        if (view === 'dashboard') this.mapFx?.mountIfNeeded();
-        if (view === 'statistics' || view === 'dashboard') this.refreshStats();
-        if (view === 'globalChat') {
-          if (!this.globalChatFx) this.globalChatFx = createGlobalChatFeature(this, this);
+        if (view === "dashboard") this.mapFx?.mountIfNeeded();
+        if (view === "statistics" || view === "dashboard") this.refreshStats();
+        if (view === "globalChat") {
+          if (!this.globalChatFx)
+            this.globalChatFx = createGlobalChatFeature(this, this);
           this.globalChatFx.mount();
+          setGlobalChatActive(this.user.uid, true); // <— hier aktiv setzen
           this.$refs?.globalChatInput?.focus();
         }
       });
@@ -279,7 +291,8 @@ const app = createApp({
       try {
         await this._friends.send(toUid);
         this.friendIdInput = "";
-        this.alertMessage = "Anfrage gesendet (falls noch keine offene vorhanden ist).";
+        this.alertMessage =
+          "Anfrage gesendet (falls noch keine offene vorhanden ist).";
         this.showAlert = true;
       } catch (e) {
         alert(e?.message || "Konnte Anfrage nicht senden.");
@@ -364,11 +377,15 @@ const app = createApp({
       applyTheme(this.userData.theme);
 
       // BAN-Watch (live)
-      const stopBanWatch = db.collection('users').doc(this.user.uid)
-        .onSnapshot(snap => {
+      const stopBanWatch = db
+        .collection("users")
+        .doc(this.user.uid)
+        .onSnapshot((snap) => {
           const banned = !!snap.data()?.isBanned;
           if (banned) {
-            alert('Dein Account wurde gesperrt. Bitte kontaktiere den Support.');
+            alert(
+              "Dein Account wurde gesperrt. Bitte kontaktiere den Support."
+            );
             logout();
           }
         });
@@ -376,7 +393,9 @@ const app = createApp({
 
       // Notifications (live)
       const stopNoti = listenForNotifications(this.user, {
-        onUpdate: (list) => { this.notifications = list; },
+        onUpdate: (list) => {
+          this.notifications = list;
+        },
         isChatOpenWith: (senderId) => this.activeChat?.partner?.id === senderId,
       });
       this._unsubs.push(stopNoti);
@@ -402,36 +421,63 @@ const app = createApp({
 
       // Listener für Online-Benutzer starten
       const stopOnlineUsersListener = listenForOnlineUsers((users) => {
-        this.onlineUsers = users.filter(u => u.id !== this.user.uid);
+        this.onlineUsers = users.filter((u) => u.id !== this.user.uid);
       });
       this._unsubs.push(stopOnlineUsersListener);
 
       // Map
       this.mapFx = createMapFeature(this);
-      
+
       // Chat (live)
       this.chatFx = createChatFeature(this, this);
-      
+
       this.setView(this.currentView);
     },
 
     cleanupListeners() {
+      // 1) Falls wir gerade im Global-Chat waren: Flag zurücknehmen
+      if (this.user?.uid) {
+        // fire-and-forget; cleanupListeners ist nicht async
+        try {
+          setGlobalChatActive(this.user.uid, false);
+        } catch {}
+      }
+
+      // 2) Heartbeat sofort stoppen (macht dich insgesamt offline)
+      stopPresenceHeartbeat();
+
+      // 3) Alle Live-Listener/Features sauber abbauen
       this._unsubs?.forEach((u) => u && u());
       this._unsubs = [];
+
       this.mapFx?.teardown();
       this.chatFx?.unsubscribe?.();
       this.chatFx = null;
-      stopPresenceHeartbeat();
+
+      // (falls vorhanden) Global-Chat-Feature auch abbauen
+      this.globalChatFx?.teardown?.();
+      this.globalChatFx = null;
+
+      // 4) UI/Intervals/Events
       if (this.bannerInterval) {
         clearInterval(this.bannerInterval);
         this.bannerInterval = null;
       }
+
       document.removeEventListener("click", this._onDocClick);
       document.removeEventListener("click", this._onShareOutside);
       document.removeEventListener("keydown", this._onKeyDown);
+      if (this._onPageHide) {
+        window.removeEventListener("pagehide", this._onPageHide);
+        this._onPageHide = null;
+      }
       this._onDocClick = null;
       this._onShareOutside = null;
       this._onKeyDown = null;
+
+      // 5) Optionale Aufräum-Resets
+      this.onlineUsers = [];
+      this.currentView = "dashboard";
     },
 
     // ---------------- Auth ----------------
@@ -450,7 +496,9 @@ const app = createApp({
       });
     },
     doLogin() {
-      return login(this.form.email, this.form.password).catch((e) => alert(e.message));
+      return login(this.form.email, this.form.password).catch((e) =>
+        alert(e.message)
+      );
     },
     doLogout() {
       logout();
@@ -519,13 +567,22 @@ const app = createApp({
     async refreshStats() {
       if (!this.user.uid) return;
       this.$nextTick(async () => {
-          try {
-              if (document.getElementById('consumptionChart')) {
-                const { chartStats, rankings } = await loadAdvancedConsumptionStats(this.user.uid, this.statsTimeRange);
-                this.statsRankings = rankings;
-                this.consumptionChart = renderChart('consumptionChart', chartStats, this.consumptionChart);
-              }
-          } catch (e) { console.error("Statistik-Fehler:", e); }
+        try {
+          if (document.getElementById("consumptionChart")) {
+            const { chartStats, rankings } = await loadAdvancedConsumptionStats(
+              this.user.uid,
+              this.statsTimeRange
+            );
+            this.statsRankings = rankings;
+            this.consumptionChart = renderChart(
+              "consumptionChart",
+              chartStats,
+              this.consumptionChart
+            );
+          }
+        } catch (e) {
+          console.error("Statistik-Fehler:", e);
+        }
       });
     },
     setStatsRange(range) {
@@ -571,7 +628,9 @@ const app = createApp({
     // ---------------- Notifications ----------------
     async handleNotificationClick(n) {
       if (!n.read) {
-        try { await markNotif(n.id); } catch {}
+        try {
+          await markNotif(n.id);
+        } catch {}
       }
       if (n.type !== "chat_message") return;
       let partnerId = n.senderId;
@@ -583,7 +642,10 @@ const app = createApp({
       let friend = this.friends.find((f) => f.id === partnerId);
       if (!friend) {
         try {
-          const snap = await db.collection("profiles_public").doc(partnerId).get();
+          const snap = await db
+            .collection("profiles_public")
+            .doc(partnerId)
+            .get();
           const d = snap.exists ? snap.data() || {} : {};
           friend = { id: partnerId, displayName: d.displayName || partnerId };
         } catch {
@@ -602,8 +664,12 @@ const app = createApp({
     },
 
     // ---------------- Friends / Share ----------------
-    openShareMenu() { this.shareMenuOpen = !this.shareMenuOpen; },
-    closeShareMenu() { this.shareMenuOpen = false; },
+    openShareMenu() {
+      this.shareMenuOpen = !this.shareMenuOpen;
+    },
+    closeShareMenu() {
+      this.shareMenuOpen = false;
+    },
 
     async shareCopy() {
       const code = this.user?.uid || "";
@@ -631,7 +697,9 @@ const app = createApp({
         await QRCode.toCanvas(
           code,
           { width: 180, margin: 0 },
-          (err, canvas) => { if (!err) div.appendChild(canvas); }
+          (err, canvas) => {
+            if (!err) div.appendChild(canvas);
+          }
         );
         this.alertMessage = "Dein QR-Code (Freundschaftscode):";
         this.showAlert = true;
