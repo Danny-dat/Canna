@@ -41,6 +41,7 @@ import { db } from "./services/firebase-config.js";
 // WICHTIG: Die folgenden zwei Zeilen sind die einzigen Import-Änderungen gegenüber deinem Original
 import { loadAdvancedConsumptionStats, renderChart } from "./services/statistics.service.js";
 import { listenForOnlineUsers } from "./services/online-users.service.js";
+import { startPresenceHeartbeat, stopPresenceHeartbeat, setActiveChat } from "./services/presence.service.js";
 
 // ---- App ----
 const app = createApp({
@@ -179,15 +180,17 @@ const app = createApp({
         this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
+        startPresenceHeartbeat(user.uid, 10000); // alle 10s (sicher < threshold 20s)
         if (this.isAdmin) await this.initAdminFeature(user);
       } else {
+        stopPresenceHeartbeat();
         this.user = { loggedIn: false, uid: null, email: null };
         this.isAdmin = false;
         this.cleanupListeners();
         applyTheme("light");
       }
     });
-
+    
     this.startBannerRotation();
 
     this._onDocClick = (e) => {
@@ -418,6 +421,7 @@ const app = createApp({
       this.mapFx?.teardown();
       this.chatFx?.unsubscribe?.();
       this.chatFx = null;
+      stopPresenceHeartbeat();
       if (this.bannerInterval) {
         clearInterval(this.bannerInterval);
         this.bannerInterval = null;
