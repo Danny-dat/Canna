@@ -193,6 +193,7 @@ const app = createApp({
         this.isAdmin = user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52";
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
+        await setGlobalChatActive(user.uid, false);
         startPresenceHeartbeat(user.uid, 500);
         if (this.isAdmin) await this.initAdminFeature(user);
       } else {
@@ -252,6 +253,8 @@ const app = createApp({
         setGlobalChatActive(this.user.uid, false);
         this.globalChatFx?.teardown();
       }
+
+      // wenn wir das Dashboard verlassen, Map abbauen
       if (this.currentView === "dashboard" && view !== "dashboard") {
         this.mapFx?.teardown();
       }
@@ -427,8 +430,8 @@ const app = createApp({
       // Listener für Online-Benutzer starten
       const stopOnlineUsersListener = listenForOnlineUsers((users) => {
         this.onlineUsers = users
-          .filter(u => u.id !== this.user.uid)                       // eigenen User ausblenden
-          .filter(u => !HIDE_FROM_GLOBAL_ONLINE.has(u.id));          // Admin ausblenden
+          .filter((u) => u.id !== this.user.uid) // eigenen User ausblenden
+          .filter((u) => !HIDE_FROM_GLOBAL_ONLINE.has(u.id)); // Admin ausblenden
       }, 2);
       this._unsubs.push(stopOnlineUsersListener);
 
@@ -451,6 +454,11 @@ const app = createApp({
       }
 
       // 2) Heartbeat sofort stoppen (macht dich insgesamt offline)
+      if (this.user?.uid) {
+        try {
+          setGlobalChatActive(this.user.uid, false);
+        } catch {}
+      }
       stopPresenceHeartbeat();
 
       // 3) Alle Live-Listener/Features sauber abbauen

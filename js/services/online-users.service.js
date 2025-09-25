@@ -5,9 +5,9 @@ import { db } from './firebase-config.js';
  * Hört auf die Presence-Collection und liefert Profile,
  * deren heartbeatAt jünger als thresholdSeconds ist.
  */
-export function listenForOnlineUsers(cb, thresholdSeconds = 20) {
+export function listenForOnlineUsers(cb, thresholdSeconds = 1) {
   const presenceRef = db.collection("presence")
-                        .where("activeGlobalChat", "==", true);
+    .where("activeGlobalChat", "==", true);
 
   return presenceRef.onSnapshot(async (snapshot) => {
     try {
