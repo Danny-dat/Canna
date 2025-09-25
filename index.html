@@ -193,35 +193,53 @@
             <div id="map"></div>
           </div>
         </div>
+<!------------------------------------------------------------------------------------------------------------------------->
+<!-------------------------------------------- Global Chat ---------------------------------------------------------------->
+<!------------------------------------------------------------------------------------------------------------------------->
+<div v-if="currentView === 'globalChat'" class="card">
+  <h3>Globaler Chat</h3>
 
-        <!-- Global Chat -->
-        <div v-if="currentView === 'globalChat'" class="card">
-          <h3>Globaler Chat</h3>
-          <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages" style="height:50vh; overflow:auto;">
-            <div v-for="m in globalChat.messages" :key="m.id"
-                class="message-bubble"
-                :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
-              <div class="message-meta">
-                <strong class="sender">{{ m.senderName }}</strong>
-                <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
-              </div>
-              <p class="body">{{ m.text }}</p>
-            </div>
-          </div>
-          <div class="chat-input">
-            <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
-                  placeholder="Nachricht…" ref="globalChatInput" />
-            <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
-                  aria-label="Senden" title="Senden">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
-                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 2L11 13"></path>
-                    <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
-                  </svg>
-            </button>
-          </div>
-        </div>
+  <div class="online-users-container">
+    <h4>Online ({{ onlineUsers.length }})</h4>
+    <div class="user-list">
+      <div v-if="onlineUsers.length === 0" style="color: var(--text-muted-color); font-size: 14px;">
+        Niemand sonst online
+      </div>
+      <span v-for="user in onlineUsers" :key="user.id" class="user-pill">
+        {{ user.displayName }}
+      </span>
+    </div>
+  </div>
+
+  <div class="rotating-banner-placeholder">
+    <p>Hier könnte Ihre Werbung rotieren</p>
+  </div>
+
+  <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages global-chat-messages">
+    <div v-for="m in globalChat.messages" :key="m.id"
+        class="message-bubble"
+        :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
+      <div class="message-meta">
+        <strong class="sender">{{ m.senderName }}</strong>
+        <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
+      </div>
+      <p class="body">{{ m.text }}</p>
+    </div>
+  </div>
+  <div class="chat-input">
+    <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
+          placeholder="Nachricht…" ref="globalChatInput" />
+    <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
+          aria-label="Senden" title="Senden">
+          <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+            viewBox="0 0 24 24" fill="none" stroke="currentColor"
+            stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <path d="M22 2L11 13"></path>
+            <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
+          </svg>
+    </button>
+  </div>
+</div>
 
         <!-- Friends -->
         <div v-if="currentView === 'friends'" class="friends-container card">
@@ -312,14 +330,53 @@
         </div>
 
         <!-- Statistics -->
-        <div v-if="currentView === 'statistics'" class="stats-container card">
+<div v-if="currentView === 'statistics'" class="stats-container card">
           <div class="stats-header">
-            <h3>Wochenübersicht</h3>
-            <div class="refresh-icon" @click="refreshStats" title="Aktualisieren">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            <h3>Deine Statistik</h3>
+            <div class="time-range-selector">
+              <button @click="setStatsRange('week')" :class="{ active: statsTimeRange === 'week' }">Woche</button>
+              <button @click="setStatsRange('month')" :class="{ active: statsTimeRange === 'month' }">Monat</button>
+              <button @click="setStatsRange('year')" :class="{ active: statsTimeRange === 'year' }">Jahr</button>
             </div>
           </div>
           <canvas id="consumptionChart"></canvas>
+
+          <div class="rankings-container">
+            <hr>
+            <h4>Deine Top-Listen</h4>
+            <div class="ranking-grids">
+              <div class="ranking-list">
+                <h5>Produkt</h5>
+                <ul>
+                  <li v-for="item in statsRankings.byProduct" :key="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="count-badge">{{ item.count }}x</span>
+                  </li>
+                </ul>
+                <div v-if="statsRankings.byProduct.length === 0" class="empty-state-small">Keine Daten</div>
+              </div>
+              <div class="ranking-list">
+                <h5>Gerät</h5>
+                <ul>
+                  <li v-for="item in statsRankings.byDevice" :key="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="count-badge">{{ item.count }}x</span>
+                  </li>
+                </ul>
+                <div v-if="statsRankings.byDevice.length === 0" class="empty-state-small">Keine Daten</div>
+              </div>
+              <div class="ranking-list full-width">
+                <h5>Kombination</h5>
+                <ul>
+                  <li v-for="item in statsRankings.byPair" :key="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="count-badge">{{ item.count }}x</span>
+                  </li>
+                </ul>
+                <div v-if="statsRankings.byPair.length === 0" class="empty-state-small">Keine Daten</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- THC Calculator -->
@@ -531,8 +588,10 @@
                 <li v-for="pd in admin.aggregates.byPair" :key="pd.id">{{ pd.id }}: {{ pd.count }}</li>
               </ul>
 
-              <button @click="adminRefreshAggregates">Aktualisieren</button>
-              <button @click="adminExportAggregatesCsv">Als CSV exportieren</button>
+             <button @click="adminRefreshAggregates">Aktualisieren</button>
+<button @click="adminExportAggregatesCsv">Aggregierte Daten als CSV</button>
+
+<button @click="adminExportAnonymousCsv">Anonyme Daten exportieren (Produkt/Gerät)</button>
             </div>
           </div>
 

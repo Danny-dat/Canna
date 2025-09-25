@@ -3,6 +3,7 @@ import { db, auth } from "../services/firebase-config.js";
 import {
   loadGlobalAggregates,
   exportAggregatesAsCsv,
+  exportAnonymousConsumptionsAsCsv
 } from "../services/admin-aggregates.service.js";
 
 export const adminMixin = {
@@ -451,5 +452,12 @@ async adminUnbanUser(uid) {
         alert(e?.message || "Export fehlgeschlagen");
       }
     },
+    
+    adminExportAnonymousCsv() {
+      alert('Der anonyme Export wird vorbereitet. Dies kann einen Moment dauern...');
+      exportAnonymousConsumptionsAsCsv().catch(e => {
+        alert(e?.message || "Der anonyme Export ist fehlgeschlagen.");
+      });
+    }
   },
 };
