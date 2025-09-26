@@ -131,15 +131,15 @@ const app = createApp({
       products: [
         { name: "Hash", img: "images/hash.png" },
         { name: "Blüte", img: "images/flower.png" },
-        { name: "Öl / Harz", img: "images/resin.png" },
+        { name: "Öl / Harz", img: "images/resin1.png" },
       ],
       devices: [
-        { name: 'Joint',     img: 'images/joint.png' },
-        { name: 'Bong',      img: 'images/bong.png' },
-        { name: 'Vaporizer', img: 'images/vaporizer.png' },
-        { name: 'Pfeife',    img: 'images/pfeife.png' },
+        { name: "Joint", img: "images/joint.png" },
+        { name: "Bong", img: "images/bong.png" },
+        { name: "Vaporizer", img: "images/vaporizer.png" },
+        { name: "Pfeife", img: "images/pfeife.png" },
       ],
-      
+
       selection: { product: null, device: null },
       thcCalc: {
         gender: "male",
