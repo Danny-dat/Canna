@@ -498,42 +498,43 @@
 
             <!-- Users -->
             <div v-if="admin.tab==='users'" class="card">
-              <h4>Nutzer (öffentliches Profil)</h4>
 
-              <!-- (deine Toolbar oben kann bleiben: Suche/Sortierung/Pagination) -->
-
-              <div
-                v-for="u in adminUsersPageItems"
-                :key="u.id"
-                class="user-row"
-                style="display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding:8px 0; flex-wrap:wrap;"
-              >
-                <div style="flex:1; min-width:220px;">
-                  <strong>
-                    {{ u.displayName || u.username || u.id }}
-                    <span v-if="u._banned" style="font-size:11px; padding:2px 6px; margin-left:6px; border-radius:10px; background:var(--danger-bg,#fee); color:var(--danger-fg,#900);">
-                      gesperrt
-                    </span>
-                  </strong>
-                  <div style="font-size:12px; color:var(--text-muted-color);">
-                    ID: {{ u.id }}
-                    <span v-if="u._email"> · {{ u._email }}</span>
-                  </div>
+              <div class="users-toolbar sticky">
+                <div class="segmented">
+                  <button
+                    :class="{on: admin.usersStatusFilter==='active'}"
+                    @click="admin.usersStatusFilter='active'">
+                    Aktive ({{ adminActiveUsersCount }})
+                  </button>
+                  <button
+                    :class="{on: admin.usersStatusFilter==='banned'}"
+                    @click="admin.usersStatusFilter='banned'">
+                    Gesperrt ({{ adminBannedUsersCount }})
+                  </button>
                 </div>
 
-                <input
-                  v-model="u.displayName"
-                  placeholder="Display Name"
-                  style="max-width:240px; flex:0 1 240px;"
-                >
+                <div class="pager">
+                  <button @click="usersPrevPageForUi" :disabled="usersPageForUi<=1">Zurück</button>
+                  <span>Seite {{ usersPageForUi }} / {{ usersTotalPagesForUi }}</span>
+                  <button @click="usersNextPageForUi" :disabled="usersPageForUi>=usersTotalPagesForUi">Weiter</button>
+                </div>
+              </div>
 
-                <!-- EIN Dropdown für alle Aktionen -->
-                <select
-                  class="action-select"
-                  v-model="u._action"
-                  @change="handleUserAction(u)"
-                  style="flex:0 0 180px;"
-                >
+              <div
+                v-for="u in usersListForUi"
+                :key="u.id"
+                class="user-row">
+                <div class="user-main">
+                  <strong>
+                    {{ u.displayName || u.username || u.id }}
+                    <span v-if="u._banned" class="badge-banned">gesperrt</span>
+                  </strong>
+                  <div class="meta">ID: {{ u.id }}<span v-if="u._email"> · {{ u._email }}</span></div>
+                </div>
+
+                <input v-model="u.displayName" placeholder="Display Name" class="name-input">
+
+                <select v-model="u._action" @change="handleUserAction(u)" class="action-select">
                   <option value="" disabled selected>Aktion wählen…</option>
                   <option value="save">Name speichern</option>
                   <option :disabled="!u._email" value="reset">Passwort-Reset senden</option>
@@ -541,13 +542,6 @@
                   <option v-else value="unban">Entsperren</option>
                   <option value="wipe">Daten löschen</option>
                 </select>
-              </div>
-
-              <!-- Pagination unten (wie gehabt) -->
-              <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
-                <button @click="adminPrevPage" :disabled="admin.usersPage<=1">Zurück</button>
-                <span>Seite {{ admin.usersPage }} / {{ adminUsersTotalPages }}</span>
-                <button @click="adminNextPage" :disabled="admin.usersPage>=adminUsersTotalPages">Weiter</button>
               </div>
             </div>
 
@@ -593,9 +587,9 @@
               </ul>
 
              <button @click="adminRefreshAggregates">Aktualisieren</button>
-<button @click="adminExportAggregatesCsv">Aggregierte Daten als CSV</button>
+             <!-- <button @click="adminExportAggregatesCsv">Aggregierte Daten als CSV</button> -->
 
-<button @click="adminExportAnonymousCsv">Anonyme Daten exportieren (Produkt/Gerät)</button>
+              <button @click="adminExportAnonymousCsv">Anonyme Daten exportieren (Produkt/Gerät)</button>
             </div>
           </div>
 

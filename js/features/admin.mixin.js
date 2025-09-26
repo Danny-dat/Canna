@@ -3,7 +3,7 @@ import { db, auth } from "../services/firebase-config.js";
 import {
   loadGlobalAggregates,
   exportAggregatesAsCsv,
-  exportAnonymousConsumptionsAsCsv
+  exportAnonymousConsumptionsAsCsv,
 } from "../services/admin-aggregates.service.js";
 
 export const adminMixin = {
@@ -16,12 +16,14 @@ export const adminMixin = {
         users: [],
         banners: [],
         aggregates: { total: 0, byProduct: [], byDevice: [], byPair: [] },
+        usersPageActive: 1,
+        usersPageBanned: 1,
+        usersStatusFilter: "active",
 
         // Users-Tab
         usersQuery: "",
         usersSort: "displayName", // 'displayName' | 'createdAt' | 'lastActiveAt'
         usersAsc: true,
-        usersPage: 1,
         usersPageSize: 20,
       },
       adminEventForm: { name: "", address: "", lat: null, lng: null },
@@ -75,6 +77,61 @@ export const adminMixin = {
         Math.ceil(this.adminUsersFiltered.length / this.admin.usersPageSize)
       );
     },
+
+      // Aufteilen in aktiv/gesperrt (nach deiner Suche/Sortierung!)
+  adminActiveUsers() {
+    return this.adminUsersFiltered.filter(u => !u._banned);
+  },
+  adminBannedUsers() {
+    return this.adminUsersFiltered.filter(u => !!u._banned);
+  },
+
+  // Zähler
+  adminActiveUsersCount() { return this.adminActiveUsers.length; },
+  adminBannedUsersCount() { return this.adminBannedUsers.length; },
+
+  // Total Pages
+  adminActiveUsersTotalPages() {
+    return Math.max(1, Math.ceil(this.adminActiveUsers.length / this.admin.usersPageSize));
+  },
+  adminBannedUsersTotalPages() {
+    return Math.max(1, Math.ceil(this.adminBannedUsers.length / this.admin.usersPageSize));
+  },
+
+  // Page Items
+  adminActiveUsersPageItems() {
+    const p = Math.min(this.admin.usersPageActive, this.adminActiveUsersTotalPages);
+    const start = (p - 1) * this.admin.usersPageSize;
+    return this.adminActiveUsers.slice(start, start + this.admin.usersPageSize);
+  },
+  adminBannedUsersPageItems() {
+    const p = Math.min(this.admin.usersPageBanned, this.adminBannedUsersTotalPages);
+    const start = (p - 1) * this.admin.usersPageSize;
+    return this.adminBannedUsers.slice(start, start + this.admin.usersPageSize);
+  },
+
+    usersListForUi() {
+    return this.admin.usersStatusFilter === "active"
+      ? this.adminActiveUsersPageItems
+      : this.adminBannedUsersPageItems;
+  },
+  usersTotalPagesForUi() {
+    return this.admin.usersStatusFilter === "active"
+      ? this.adminActiveUsersTotalPages
+      : this.adminBannedUsersTotalPages;
+  },
+  usersPageForUi: {
+    get() {
+      return this.admin.usersStatusFilter === "active"
+        ? this.admin.usersPageActive
+        : this.admin.usersPageBanned;
+    },
+    set(v) {
+      if (this.admin.usersStatusFilter === "active") this.admin.usersPageActive = v;
+      else this.admin.usersPageBanned = v;
+    }
+  },
+
   },
 
   methods: {
@@ -126,7 +183,11 @@ export const adminMixin = {
           _action: "",
         };
       });
-      this.admin.usersPage = 1;
+
+      // Reset beider Paginierungen
+      this.admin.usersPage = 1; // falls du es noch anderweitig nutzt
+      this.admin.usersPageActive = 1;
+      this.admin.usersPageBanned = 1;
     },
 
     adminChangeSort(key) {
@@ -202,7 +263,7 @@ export const adminMixin = {
       alert("Gesperrt.");
     },
 
-        // Aktion aus Dropdown ausführen
+    // Aktion aus Dropdown ausführen
     handleUserAction(u) {
       const act = u._action;
       // Auswahl zurücksetzen, damit das Dropdown wieder "Aktion wählen…" zeigt
@@ -227,48 +288,60 @@ export const adminMixin = {
       }
     },
 
-// Nutzer sperren (banlist + users.isBanned)
-async adminBanUser(uid, reason = '') {
-  try {
-    if (!uid) return;
-    if (!confirm(`Nutzer ${uid} wirklich sperren?`)) return;
+    // Nutzer sperren (banlist + users.isBanned)
+    async adminBanUser(uid, reason = "") {
+      try {
+        if (!uid) return;
+        if (!confirm(`Nutzer ${uid} wirklich sperren?`)) return;
 
-    await db.collection('banlist').doc(uid).set({
-      reason: reason || null,
-      bannedAt: new Date(),
-    }, { merge: false });
+        await db
+          .collection("banlist")
+          .doc(uid)
+          .set(
+            {
+              reason: reason || null,
+              bannedAt: new Date(),
+            },
+            { merge: false }
+          );
 
-    await db.collection('users').doc(uid).set({
-      isBanned: true,
-      bannedAt: new Date(),
-    }, { merge: true });
+        await db.collection("users").doc(uid).set(
+          {
+            isBanned: true,
+            bannedAt: new Date(),
+          },
+          { merge: true }
+        );
 
-    const u = this.admin.users.find(x => x.id === uid);
-    if (u) u._banned = true;
-    alert('Gesperrt.');
-  } catch (e) {
-    console.error('[adminBanUser]', e);
-    alert(e?.message || 'Sperren fehlgeschlagen (Rules?)');
-  }
-},
+        const u = this.admin.users.find((x) => x.id === uid);
+        if (u) u._banned = true;
+        alert("Gesperrt.");
+      } catch (e) {
+        console.error("[adminBanUser]", e);
+        alert(e?.message || "Sperren fehlgeschlagen (Rules?)");
+      }
+    },
 
-// Sperre aufheben (banlist + users.isBanned)
-async adminUnbanUser(uid) {
-  try {
-    if (!uid) return;
-    if (!confirm(`Sperre für ${uid} aufheben?`)) return;
+    // Sperre aufheben (banlist + users.isBanned)
+    async adminUnbanUser(uid) {
+      try {
+        if (!uid) return;
+        if (!confirm(`Sperre für ${uid} aufheben?`)) return;
 
-    await db.collection('banlist').doc(uid).delete();
-    await db.collection('users').doc(uid).set({ isBanned: false }, { merge: true });
+        await db.collection("banlist").doc(uid).delete();
+        await db
+          .collection("users")
+          .doc(uid)
+          .set({ isBanned: false }, { merge: true });
 
-    const u = this.admin.users.find(x => x.id === uid);
-    if (u) u._banned = false;
-    alert('Entsperrt.');
-  } catch (e) {
-    console.error('[adminUnbanUser]', e);
-    alert(e?.message || 'Entsperren fehlgeschlagen');
-  }
-},
+        const u = this.admin.users.find((x) => x.id === uid);
+        if (u) u._banned = false;
+        alert("Entsperrt.");
+      } catch (e) {
+        console.error("[adminUnbanUser]", e);
+        alert(e?.message || "Entsperren fehlgeschlagen");
+      }
+    },
 
     // App-Daten löschen/anon (kein Auth-Delete!)
     async adminWipeUserData(uid) {
@@ -452,12 +525,79 @@ async adminUnbanUser(uid) {
         alert(e?.message || "Export fehlgeschlagen");
       }
     },
-    
+
     adminExportAnonymousCsv() {
-      alert('Der anonyme Export wird vorbereitet. Dies kann einen Moment dauern...');
-      exportAnonymousConsumptionsAsCsv().catch(e => {
+      alert(
+        "Der anonyme Export wird vorbereitet. Dies kann einen Moment dauern..."
+      );
+      exportAnonymousConsumptionsAsCsv().catch((e) => {
         alert(e?.message || "Der anonyme Export ist fehlgeschlagen.");
       });
+    },
+
+     // Pagination (aktive)
+  adminPrevPageActive() {
+    this.admin.usersPageActive = Math.max(1, this.admin.usersPageActive - 1);
+  },
+  adminNextPageActive() {
+    this.admin.usersPageActive = Math.min(this.adminActiveUsersTotalPages, this.admin.usersPageActive + 1);
+  },
+
+  // Pagination (gesperrte)
+  adminPrevPageBanned() {
+    this.admin.usersPageBanned = Math.max(1, this.admin.usersPageBanned - 1);
+  },
+  adminNextPageBanned() {
+    this.admin.usersPageBanned = Math.min(this.adminBannedUsersTotalPages, this.admin.usersPageBanned + 1);
+  },
+
+  // Dropdown-Aktionen (leicht ergänzt um Page-Clamps)
+  handleUserAction(u) {
+    const act = u._action; u._action = "";
+    if (!act) return;
+    if (act === "ban") {
+      return this.adminBanUser(u.id).finally(() => {
+        this.admin.usersPageActive = Math.min(this.admin.usersPageActive, this.adminActiveUsersTotalPages);
+        this.admin.usersPageBanned = Math.min(this.admin.usersPageBanned, this.adminBannedUsersTotalPages);
+        this.admin.usersStatusFilter = "banned"; // optional: direkt zu "Gesperrt" springen
+      });
     }
+    if (act === "unban") {
+      return this.adminUnbanUser(u.id).finally(() => {
+        this.admin.usersPageActive = Math.min(this.admin.usersPageActive, this.adminActiveUsersTotalPages);
+        this.admin.usersPageBanned = Math.min(this.admin.usersPageBanned, this.adminBannedUsersTotalPages);
+        this.admin.usersStatusFilter = "active";
+      });
+    }
+
+    switch (act) {
+      case "save":
+        return this.adminSaveUser(u);
+      case "reset":
+        if (!u._email) return alert("Für diesen Nutzer ist keine E-Mail hinterlegt.");
+        return this.adminSendPasswordReset(u._email);
+      case "ban":
+        return this.adminBanUser(u.id).finally(() => {
+          // Nutzer wandert nach „gesperrt“
+          this.admin.usersPageActive = Math.min(this.admin.usersPageActive, this.adminActiveUsersTotalPages);
+          this.admin.usersPageBanned = Math.min(this.admin.usersPageBanned, this.adminBannedUsersTotalPages);
+        });
+      case "unban":
+        return this.adminUnbanUser(u.id).finally(() => {
+          // Nutzer wandert nach „aktiv“
+          this.admin.usersPageActive = Math.min(this.admin.usersPageActive, this.adminActiveUsersTotalPages);
+          this.admin.usersPageBanned = Math.min(this.admin.usersPageBanned, this.adminBannedUsersTotalPages);
+        });
+      case "wipe":
+        return this.adminWipeUserData(u.id);
+      default:
+        return;
+    }
+  },
+
+   usersPrevPageForUi() { this.usersPageForUi = Math.max(1, this.usersPageForUi - 1); },
+  usersNextPageForUi() { this.usersPageForUi = Math.min(this.usersTotalPagesForUi, this.usersPageForUi + 1); },
+
+  
   },
 };
