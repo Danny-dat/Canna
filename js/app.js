@@ -131,9 +131,15 @@ const app = createApp({
       products: [
         { name: "Hash", img: "images/hash.png" },
         { name: "Blüte", img: "images/flower.png" },
-        { name: "Harz", img: "images/resin.png" },
+        { name: "Öl / Harz", img: "images/resin.png" },
       ],
-      devices: ["Joint", "Bong", "Vaporizer", "Pfeife"],
+      devices: [
+        { name: 'Joint',     img: 'images/joint.png' },
+        { name: 'Bong',      img: 'images/bong.png' },
+        { name: 'Vaporizer', img: 'images/vaporizer.png' },
+        { name: 'Pfeife',    img: 'images/pfeife.png' },
+      ],
+      
       selection: { product: null, device: null },
       thcCalc: {
         gender: "male",
@@ -151,7 +157,6 @@ const app = createApp({
 
       // Map/Stats
       mapFx: null,
-      showFriendsOnMap: false,
       consumptionChart: null,
       // NEUE DATEN FÜR DIE STATISTIK
       statsTimeRange: "week",

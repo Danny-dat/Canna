@@ -163,10 +163,11 @@
             </div>
 
             <div class="selection">
-              <div v-for="device in devices" :key="device"
-                   @click="selection.device = device"
-                   :class="{ selected: selection.device === device }">
-                <p>{{ device }}</p>
+              <div v-for="item in devices" :key="item.name"
+                  @click="selection.device = item.name"
+                  :class="{ selected: selection.device === item.name }">
+                <img :src="item.img" :alt="item.name">
+                <p>{{ item.name }}</p>
               </div>
             </div>
 
@@ -181,15 +182,17 @@
 
           <div class="map-container card">
             <div class="map-header">
-              <h3>Konsum-Karte</h3>
-              <div class="map-controls">
+              <h3>Event-Karte</h3>
+              <!-- Auskommentiert Später Alles dazu entfernen
+                <div class="map-controls">
                 <label for="friend-toggle">Freunde anzeigen</label>
                 <label class="toggle-switch">
                   <input type="checkbox" id="friend-toggle" v-model="showFriendsOnMap" @change="toggleFriendMarkers">
                   <span class="slider"></span>
                 </label>
               </div>
-            </div>
+            </div>>
+            -->
             <div id="map"></div>
           </div>
         </div>
@@ -330,7 +333,7 @@
         </div>
 
         <!-- Statistics -->
-<div v-if="currentView === 'statistics'" class="stats-container card">
+        <div v-if="currentView === 'statistics'" class="stats-container card">
           <div class="stats-header">
             <h3>Deine Statistik</h3>
             <div class="time-range-selector">
