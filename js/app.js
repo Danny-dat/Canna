@@ -129,15 +129,15 @@ const app = createApp({
 
       // Auswahl + THC
       products: [
-        { name: "Hash", img: "images/hash.png" },
-        { name: "Blüte", img: "images/flower.png" },
-        { name: "Öl / Harz", img: "images/resin1.png" },
+        { name: "Hash", img: "images/produkte/hash.png" },
+        { name: "Blüte", img: "images/produkte/flower.png" },
+        { name: "Öl / Harz", img: "images/produkte/resin1.png" },
       ],
       devices: [
-        { name: "Joint", img: "images/joint.png" },
-        { name: "Bong", img: "images/bong.png" },
-        { name: "Vaporizer", img: "images/vaporizer.png" },
-        { name: "Pfeife", img: "images/pfeife.png" },
+        { name: "Joint", img: "images/devices/joint.png" },
+        { name: "Bong", img: "images/devices/bong.png" },
+        { name: "Vaporizer", img: "images/devices/vaporizer.png" },
+        { name: "Pfeife", img: "images/devices/pfeife.png" },
       ],
 
       selection: { product: null, device: null },
