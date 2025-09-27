@@ -199,7 +199,7 @@ const app = createApp({
         await ensurePublicProfileOnLogin(user);
         await this.initAppFeatures();
         await setGlobalChatActive(user.uid, false);
-        startPresenceHeartbeat(user.uid, 500);
+        startPresenceHeartbeat(user.uid, 2000);
         if (this.isAdmin) await this.initAdminFeature(user);
       } else {
         stopPresenceHeartbeat();
