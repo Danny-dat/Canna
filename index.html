@@ -163,10 +163,11 @@
             </div>
 
             <div class="selection">
-              <div v-for="device in devices" :key="device"
-                   @click="selection.device = device"
-                   :class="{ selected: selection.device === device }">
-                <p>{{ device }}</p>
+              <div v-for="item in devices" :key="item.name"
+                  @click="selection.device = item.name"
+                  :class="{ selected: selection.device === item.name }">
+                <img :src="item.img" :alt="item.name">
+                <p>{{ item.name }}</p>
               </div>
             </div>
 
@@ -181,47 +182,68 @@
 
           <div class="map-container card">
             <div class="map-header">
-              <h3>Konsum-Karte</h3>
-              <div class="map-controls">
+              <h3>Event-Karte</h3>
+              <!-- Auskommentiert Später Alles dazu entfernen
+                <div class="map-controls">
                 <label for="friend-toggle">Freunde anzeigen</label>
                 <label class="toggle-switch">
                   <input type="checkbox" id="friend-toggle" v-model="showFriendsOnMap" @change="toggleFriendMarkers">
                   <span class="slider"></span>
                 </label>
               </div>
-            </div>
+            </div>>
+            -->
             <div id="map"></div>
+          </div>
+          </div>
+        </div>
+<!------------------------------------------------------------------------------------------------------------------------->
+<!-------------------------------------------- Global Chat ---------------------------------------------------------------->
+<!------------------------------------------------------------------------------------------------------------------------->
+      <div v-if="currentView === 'globalChat'" class="card">
+        <h3>Globaler Chat</h3>
+
+        <div class="online-users-container">
+          <h4>Online ({{ onlineUsers.length }})</h4>
+          <div class="user-list">
+            <div v-if="onlineUsers.length === 0" style="color: var(--text-muted-color); font-size: 14px;">
+              Niemand sonst online
+            </div>
+            <span v-for="user in onlineUsers" :key="user.id" class="user-pill">
+              {{ user.displayName }}
+            </span>
           </div>
         </div>
 
-        <!-- Global Chat -->
-        <div v-if="currentView === 'globalChat'" class="card">
-          <h3>Globaler Chat</h3>
-          <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages" style="height:50vh; overflow:auto;">
-            <div v-for="m in globalChat.messages" :key="m.id"
-                class="message-bubble"
-                :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
-              <div class="message-meta">
-                <strong class="sender">{{ m.senderName }}</strong>
-                <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
-              </div>
-              <p class="body">{{ m.text }}</p>
+        <div class="rotating-banner-placeholder">
+          <p>Hier könnte Ihre Werbung rotieren</p>
+        </div>
+
+        <div id="globalChatMessages" ref="globalChatMessages" class="chat-messages global-chat-messages">
+          <div v-for="m in globalChat.messages" :key="m.id"
+              class="message-bubble"
+              :class="{ sent: m.senderId === user.uid, received: m.senderId !== user.uid }">
+            <div class="message-meta">
+              <strong class="sender">{{ m.senderName }}</strong>
+              <small class="time">{{ formatTimestamp(m.createdAt) }}</small>
             </div>
-          </div>
-          <div class="chat-input">
-            <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
-                  placeholder="Nachricht…" ref="globalChatInput" />
-            <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
-                  aria-label="Senden" title="Senden">
-                  <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
-                    viewBox="0 0 24 24" fill="none" stroke="currentColor"
-                    stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                    <path d="M22 2L11 13"></path>
-                    <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
-                  </svg>
-            </button>
+            <p class="body">{{ m.text }}</p>
           </div>
         </div>
+        <div class="chat-input">
+          <input type="text" v-model="globalChatInput" @keyup.enter.exact="sendGlobalMessage"
+                placeholder="Nachricht…" ref="globalChatInput" />
+          <button :disabled="!globalChatInput?.trim()" @click="sendGlobalMessage"
+                aria-label="Senden" title="Senden">
+                <svg xmlns="http://www.w3.org/2000/svg" width="18" height="18"
+                  viewBox="0 0 24 24" fill="none" stroke="currentColor"
+                  stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M22 2L11 13"></path>
+                  <path d="M22 2l-7 20-4-9-9-4 20-7z"></path>
+                </svg>
+          </button>
+        </div>
+      </div>
 
         <!-- Friends -->
         <div v-if="currentView === 'friends'" class="friends-container card">
@@ -314,12 +336,51 @@
         <!-- Statistics -->
         <div v-if="currentView === 'statistics'" class="stats-container card">
           <div class="stats-header">
-            <h3>Wochenübersicht</h3>
-            <div class="refresh-icon" @click="refreshStats" title="Aktualisieren">
-              <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 4 23 10 17 10"></polyline><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"></path></svg>
+            <h3>Deine Statistik</h3>
+            <div class="time-range-selector">
+              <button @click="setStatsRange('week')" :class="{ active: statsTimeRange === 'week' }">Woche</button>
+              <button @click="setStatsRange('month')" :class="{ active: statsTimeRange === 'month' }">Monat</button>
+              <button @click="setStatsRange('year')" :class="{ active: statsTimeRange === 'year' }">Jahr</button>
             </div>
           </div>
           <canvas id="consumptionChart"></canvas>
+
+          <div class="rankings-container">
+            <hr>
+            <h4>Deine Top-Listen</h4>
+            <div class="ranking-grids">
+              <div class="ranking-list">
+                <h5>Produkt</h5>
+                <ul>
+                  <li v-for="item in statsRankings.byProduct" :key="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="count-badge">{{ item.count }}x</span>
+                  </li>
+                </ul>
+                <div v-if="statsRankings.byProduct.length === 0" class="empty-state-small">Keine Daten</div>
+              </div>
+              <div class="ranking-list">
+                <h5>Gerät</h5>
+                <ul>
+                  <li v-for="item in statsRankings.byDevice" :key="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="count-badge">{{ item.count }}x</span>
+                  </li>
+                </ul>
+                <div v-if="statsRankings.byDevice.length === 0" class="empty-state-small">Keine Daten</div>
+              </div>
+              <div class="ranking-list full-width">
+                <h5>Kombination</h5>
+                <ul>
+                  <li v-for="item in statsRankings.byPair" :key="item.name">
+                    <span>{{ item.name }}</span>
+                    <span class="count-badge">{{ item.count }}x</span>
+                  </li>
+                </ul>
+                <div v-if="statsRankings.byPair.length === 0" class="empty-state-small">Keine Daten</div>
+              </div>
+            </div>
+          </div>
         </div>
 
         <!-- THC Calculator -->
@@ -437,42 +498,43 @@
 
             <!-- Users -->
             <div v-if="admin.tab==='users'" class="card">
-              <h4>Nutzer (öffentliches Profil)</h4>
 
-              <!-- (deine Toolbar oben kann bleiben: Suche/Sortierung/Pagination) -->
-
-              <div
-                v-for="u in adminUsersPageItems"
-                :key="u.id"
-                class="user-row"
-                style="display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding:8px 0; flex-wrap:wrap;"
-              >
-                <div style="flex:1; min-width:220px;">
-                  <strong>
-                    {{ u.displayName || u.username || u.id }}
-                    <span v-if="u._banned" style="font-size:11px; padding:2px 6px; margin-left:6px; border-radius:10px; background:var(--danger-bg,#fee); color:var(--danger-fg,#900);">
-                      gesperrt
-                    </span>
-                  </strong>
-                  <div style="font-size:12px; color:var(--text-muted-color);">
-                    ID: {{ u.id }}
-                    <span v-if="u._email"> · {{ u._email }}</span>
-                  </div>
+              <div class="users-toolbar sticky">
+                <div class="segmented">
+                  <button
+                    :class="{on: admin.usersStatusFilter==='active'}"
+                    @click="admin.usersStatusFilter='active'">
+                    Aktive ({{ adminActiveUsersCount }})
+                  </button>
+                  <button
+                    :class="{on: admin.usersStatusFilter==='banned'}"
+                    @click="admin.usersStatusFilter='banned'">
+                    Gesperrt ({{ adminBannedUsersCount }})
+                  </button>
                 </div>
 
-                <input
-                  v-model="u.displayName"
-                  placeholder="Display Name"
-                  style="max-width:240px; flex:0 1 240px;"
-                >
+                <div class="pager">
+                  <button @click="usersPrevPageForUi" :disabled="usersPageForUi<=1">Zurück</button>
+                  <span>Seite {{ usersPageForUi }} / {{ usersTotalPagesForUi }}</span>
+                  <button @click="usersNextPageForUi" :disabled="usersPageForUi>=usersTotalPagesForUi">Weiter</button>
+                </div>
+              </div>
 
-                <!-- EIN Dropdown für alle Aktionen -->
-                <select
-                  class="action-select"
-                  v-model="u._action"
-                  @change="handleUserAction(u)"
-                  style="flex:0 0 180px;"
-                >
+              <div
+                v-for="u in usersListForUi"
+                :key="u.id"
+                class="user-row">
+                <div class="user-main">
+                  <strong>
+                    {{ u.displayName || u.username || u.id }}
+                    <span v-if="u._banned" class="badge-banned">gesperrt</span>
+                  </strong>
+                  <div class="meta">ID: {{ u.id }}<span v-if="u._email"> · {{ u._email }}</span></div>
+                </div>
+
+                <input v-model="u.displayName" placeholder="Display Name" class="name-input">
+
+                <select v-model="u._action" @change="handleUserAction(u)" class="action-select">
                   <option value="" disabled selected>Aktion wählen…</option>
                   <option value="save">Name speichern</option>
                   <option :disabled="!u._email" value="reset">Passwort-Reset senden</option>
@@ -480,13 +542,6 @@
                   <option v-else value="unban">Entsperren</option>
                   <option value="wipe">Daten löschen</option>
                 </select>
-              </div>
-
-              <!-- Pagination unten (wie gehabt) -->
-              <div style="display:flex; gap:8px; align-items:center; margin-top:10px;">
-                <button @click="adminPrevPage" :disabled="admin.usersPage<=1">Zurück</button>
-                <span>Seite {{ admin.usersPage }} / {{ adminUsersTotalPages }}</span>
-                <button @click="adminNextPage" :disabled="admin.usersPage>=adminUsersTotalPages">Weiter</button>
               </div>
             </div>
 
@@ -531,8 +586,10 @@
                 <li v-for="pd in admin.aggregates.byPair" :key="pd.id">{{ pd.id }}: {{ pd.count }}</li>
               </ul>
 
-              <button @click="adminRefreshAggregates">Aktualisieren</button>
-              <button @click="adminExportAggregatesCsv">Als CSV exportieren</button>
+             <button @click="adminRefreshAggregates">Aktualisieren</button>
+             <!-- <button @click="adminExportAggregatesCsv">Aggregierte Daten als CSV</button> -->
+
+              <button @click="adminExportAnonymousCsv">Anonyme Daten exportieren (Produkt/Gerät)</button>
             </div>
           </div>
 

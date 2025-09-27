@@ -335,3 +335,55 @@ h3, h4 { border-bottom: 1px solid var(--border-color); padding-bottom: 10px; mar
 .settings-window label { margin-bottom: 8px; font-weight: 500; }
 .settings-window input { padding: 10px; border: 1px solid var(--border-color); background-color: var(--background-color); color: var(--text-color); border-radius: 8px; font-size: 16px; width: calc(100% - 22px); }
 .btn-close-alert { background-color: var(--error-color); }
+/* Globale Chat – Online-Liste */
+.online-users-container { margin-bottom: 12px; }
+
+.user-list {
+  display: flex;            /* nebeneinander */
+  flex-wrap: wrap;          /* umbrechen, wenn voll */
+  gap: 8px;                 /* Abstand zwischen Pills */
+  align-items: center;
+}
+
+.user-pill {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 10px;
+  border-radius: 9999px;    /* runde Pill */
+  border: 1px solid var(--border-color, #e5e7eb);
+  background: var(--chip-bg, #f5f7fb);
+  font-size: 12px;
+  line-height: 1;
+  font-weight: 600;
+  color: var(--text-color, #111);
+}
+
+/* kleiner grüner Online-Punkt vor dem Namen (optional) */
+.user-pill::before {
+  content: "";
+  width: 8px; height: 8px;
+  border-radius: 9999px;
+  background: #22c55e;
+  margin-right: 6px;
+}
+
+.users-toolbar {
+  display:flex; justify-content:space-between; align-items:center;
+  gap:12px; margin-bottom:8px; padding-bottom:8px; border-bottom:1px solid var(--border-color);
+}
+.users-toolbar.sticky { position:sticky; top:0; background:var(--card-bg,#fff); z-index:2; padding-top:8px; }
+
+.segmented { display:inline-flex; border:1px solid var(--border-color); border-radius:8px; overflow:hidden; }
+.segmented > button { padding:6px 10px; border:0; background:transparent; cursor:pointer; }
+.segmented > button.on { background:var(--accent-bg,#e6f4ea); color:var(--accent-fg,#0a7b3e); font-weight:600; }
+
+.user-row { display:flex; align-items:center; gap:10px; border-bottom:1px solid var(--border-color); padding:8px 0; flex-wrap:wrap; }
+.user-main { flex:1; min-width:240px; }
+.meta { font-size:12px; color:var(--text-muted-color); }
+.name-input { max-width:240px; flex:0 1 240px; }
+.action-select { flex:0 0 180px; }
+
+.badge-banned {
+  font-size:11px; padding:2px 6px; margin-left:6px; border-radius:10px;
+  background:var(--danger-bg,#fee); color:var(--danger-fg,#900);
+}

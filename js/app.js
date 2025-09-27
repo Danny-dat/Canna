@@ -5,7 +5,6 @@ const { createApp } = Vue;
 import { applyTheme } from "./utils/dom.util.js";
 import { formatTimestamp } from "./utils/format.util.js";
 import { calculateThc } from "./services/thc-calculator.service.js";
-
 import {
   onAuth,
   register,
@@ -13,26 +12,21 @@ import {
   logout,
   resetPassword,
 } from "./services/auth.service.js";
-
 import {
   loadUserData,
   saveUserData,
   loadUserSettings,
   saveUserSettings,
 } from "./services/user-data.service.js";
-
 import {
   ensurePublicProfileOnLogin,
   updatePublicProfile,
 } from "./services/profile.service.js";
-
 import {
   shareMyFriendCode,
   copyToClipboard,
 } from "./services/friends.service.js";
-
 import { adminMixin } from "./features/admin.mixin.js";
-
 import { initFriendsFeature, friendsActions } from "./features/friends.js";
 import { initEventsFeature, voteEvent } from "./features/events.js";
 import {
@@ -40,13 +34,28 @@ import {
   markNotificationAsRead as markNotif,
 } from "./features/notifications.js";
 import { createMapFeature } from "./features/map.js";
-import { refreshStatsFor } from "./features/statistics.js";
 import { logConsumption } from "./features/consumption.js";
 import { createChatFeature } from "./features/chat.js";
 import { createGlobalChatFeature } from "./features/global-chat.js";
+import { db } from "./services/firebase-config.js";
+// WICHTIG: Die folgenden zwei Zeilen sind die einzigen Import-Änderungen gegenüber deinem Original
+import {
+  loadAdvancedConsumptionStats,
+  renderChart,
+} from "./services/statistics.service.js";
+import { listenForOnlineUsers } from "./services/online-users.service.js";
+import {
+  startPresenceHeartbeat,
+  stopPresenceHeartbeat,
+  setActiveChat,
+  setGlobalChatActive,
+} from "./services/presence.service.js";
 
-import { db } from "./services/firebase-config.js"; // für handleNotificationClick
-
+//---- Konfiguration ----
+// Admin-UIDs, die im Global-Online-User-Feature NICHT angezeigt werden (z.B. deine eigene)
+const HIDE_FROM_GLOBAL_ONLINE = new Set([
+  "ZAz0Bnde5zYIS8qCDT86aOvEDX52", // <- deine Admin-UID
+]);
 // ---- App ----
 const app = createApp({
   mixins: [adminMixin],
@@ -68,6 +77,7 @@ const app = createApp({
       globalChatFx: null,
       globalChat: { messages: [] },
       globalChatInput: "",
+      onlineUsers: [], // Hinzugefügt für Online-Anzeige
 
       // Auth + Profile
       user: { loggedIn: false, uid: null, email: null },
@@ -108,7 +118,7 @@ const app = createApp({
       notifications: [],
       events: [],
 
-      // Chat (Platzhalter – Feature bindest du später)
+      // Chat
       activeChat: {
         chatId: null,
         partner: null,
@@ -119,11 +129,17 @@ const app = createApp({
 
       // Auswahl + THC
       products: [
-        { name: "Hash", img: "images/hash.png" },
-        { name: "Blüte", img: "images/flower.png" },
-        { name: "Harz", img: "images/resin.png" },
+        { name: "Hash", img: "images/produkte/hash.png" },
+        { name: "Blüte", img: "images/produkte/flower.png" },
+        { name: "Öl / Harz", img: "images/produkte/resin1.png" },
       ],
-      devices: ["Joint", "Bong", "Vaporizer", "Pfeife"],
+      devices: [
+        { name: "Joint", img: "images/devices/joint.png" },
+        { name: "Bong", img: "images/devices/bong.png" },
+        { name: "Vaporizer", img: "images/devices/vaporizer.png" },
+        { name: "Pfeife", img: "images/devices/pfeife.png" },
+      ],
+
       selection: { product: null, device: null },
       thcCalc: {
         gender: "male",
@@ -141,8 +157,14 @@ const app = createApp({
 
       // Map/Stats
       mapFx: null,
-      showFriendsOnMap: false,
       consumptionChart: null,
+      // NEUE DATEN FÜR DIE STATISTIK
+      statsTimeRange: "week",
+      statsRankings: {
+        byProduct: [],
+        byDevice: [],
+        byPair: [],
+      },
 
       // interne Unsubscriber
       _unsubs: [],
@@ -155,64 +177,62 @@ const app = createApp({
     },
   },
 
-mounted() {
-  onAuth(async (user) => {
-    if (user) {
-      // --- BAN-CHECK ---
-      try {
-        const uSnap = await db.collection('users').doc(user.uid).get();
-        const isBanned = !!uSnap.data()?.isBanned;
-        if (isBanned) {
-          alert('Dein Account ist gesperrt. Bitte kontaktiere den Support.');
-          await logout();
-          return;
+  mounted() {
+    onAuth(async (user) => {
+      if (user) {
+        // --- BAN-CHECK ---
+        try {
+          const uSnap = await db.collection("users").doc(user.uid).get();
+          const isBanned = !!uSnap.data()?.isBanned;
+          if (isBanned) {
+            alert("Dein Account ist gesperrt. Bitte kontaktiere den Support.");
+            await logout();
+            return;
+          }
+        } catch (e) {
+          console.warn("[ban-check] users/{uid} read failed:", e);
         }
-      } catch (e) {
-        console.warn('[ban-check] users/{uid} read failed:', e);
+        // --- /BAN-CHECK ---
+
+        this.user = { loggedIn: true, uid: user.uid, email: user.email };
+        this.isAdmin = user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52";
+        await ensurePublicProfileOnLogin(user);
+        await this.initAppFeatures();
+        await setGlobalChatActive(user.uid, false);
+        startPresenceHeartbeat(user.uid, 2000);
+        if (this.isAdmin) await this.initAdminFeature(user);
+      } else {
+        stopPresenceHeartbeat();
+        this.user = { loggedIn: false, uid: null, email: null };
+        this.isAdmin = false;
+        this.cleanupListeners();
+        applyTheme("light");
       }
-      // --- /BAN-CHECK ---
+    });
 
-      this.user = { loggedIn: true, uid: user.uid, email: user.email };
+    this.startBannerRotation();
 
-      this.isAdmin = (user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52");
+    this._onDocClick = (e) => {
+      if (!this.showNotifications) return;
+      const bellWrap = this.$refs?.bellWrap;
+      if (bellWrap && !bellWrap.contains(e.target)) {
+        this.showNotifications = false;
+      }
+    };
+    this._onKeyDown = (e) => {
+      if (e.key === "Escape") this.showNotifications = false;
+    };
 
-      await ensurePublicProfileOnLogin(user);
-      await this.initAppFeatures();
+    document.addEventListener("click", this._onDocClick);
+    document.addEventListener("keydown", this._onKeyDown);
 
-      if (this.isAdmin) await this.initAdminFeature(user);
-
-    } else {
-      this.user = { loggedIn: false, uid: null, email: null };
-      this.isAdmin = false;
-      this.cleanupListeners();
-      applyTheme("light");
-    }
-  });
-
-  this.startBannerRotation();
-
-  this._onDocClick = (e) => {
-    if (!this.showNotifications) return;
-    const bellWrap = this.$refs?.bellWrap;
-    if (!bellWrap) return;
-    if (!bellWrap.contains(e.target)) {
-      this.showNotifications = false;
-    }
-  };
-  this._onKeyDown = (e) => {
-    if (e.key === "Escape") this.showNotifications = false;
-  };
-
-  document.addEventListener("click", this._onDocClick);
-  document.addEventListener("keydown", this._onKeyDown);
-
-  this._onShareOutside = (e) => {
-    if (!this.shareMenuOpen) return;
-    const btn = document.querySelector(".btn-share-wrap");
-    if (btn && !btn.contains(e.target)) this.shareMenuOpen = false;
-  };
-  document.addEventListener("click", this._onShareOutside);
-},
+    this._onShareOutside = (e) => {
+      if (!this.shareMenuOpen) return;
+      const btn = document.querySelector(".btn-share-wrap");
+      if (btn && !btn.contains(e.target)) this.shareMenuOpen = false;
+    };
+    document.addEventListener("click", this._onShareOutside);
+  },
 
   methods: {
     // ---------------- UI / Navigation ----------------
@@ -220,12 +240,12 @@ mounted() {
 
     toggleMenu() {
       this.showMenu = !this.showMenu;
-      this.$nextTick(() => this.mapFx?.map && this.mapFx.map.invalidateSize());
+      this.$nextTick(() => this.mapFx?.map?.invalidateSize());
     },
 
     toggleSettings() {
       this.showSettings = !this.showSettings;
-      this.$nextTick(() => this.mapFx?.map && this.mapFx.map.invalidateSize());
+      this.$nextTick(() => this.mapFx?.map?.invalidateSize());
     },
 
     toggleNotifications() {
@@ -233,27 +253,31 @@ mounted() {
     },
 
     setView(view) {
+      // wenn wir den Global-Chat verlassen, Flag ausschalten
+      if (this.currentView === "globalChat" && view !== "globalChat") {
+        setGlobalChatActive(this.user.uid, false);
+        this.globalChatFx?.teardown();
+      }
+
+      // wenn wir das Dashboard verlassen, Map abbauen
       if (this.currentView === "dashboard" && view !== "dashboard") {
         this.mapFx?.teardown();
-      }
-      if (this.currentView === "globalChat" && view !== "globalChat") {
-        this.globalChatFx?.teardown();
       }
 
       this.currentView = view;
       this.showMenu = false;
 
-      if (view === "dashboard") {
-        this.$nextTick(() => this.mapFx?.mountIfNeeded());
-        this.refreshStats();
-      } else if (view === "globalChat") {
-        if (!this.globalChatFx)
-          this.globalChatFx = createGlobalChatFeature(this, this);
-        this.globalChatFx.mount();
-        this.$nextTick(() => this.$refs?.globalChatInput?.focus?.());
-      } else if (view === "statistics") {
-        this.refreshStats();
-      }
+      this.$nextTick(() => {
+        if (view === "dashboard") this.mapFx?.mountIfNeeded();
+        if (view === "statistics" || view === "dashboard") this.refreshStats();
+        if (view === "globalChat") {
+          if (!this.globalChatFx)
+            this.globalChatFx = createGlobalChatFeature(this, this);
+          this.globalChatFx.mount();
+          setGlobalChatActive(this.user.uid, true); // <— hier aktiv setzen
+          this.$refs?.globalChatInput?.focus();
+        }
+      });
     },
 
     closeAlert() {
@@ -349,9 +373,9 @@ mounted() {
 
       switch (act) {
         case "remove":
-          return this.removeFriendB(friend); // deine bestehende Methode
+          return this.removeFriendB(friend);
         case "block":
-          return this.blockFriendB(friend); // deine bestehende Methode
+          return this.blockFriendB(friend);
         case "unblock":
           return this.unblockFriendB(friend);
       }
@@ -366,11 +390,15 @@ mounted() {
       applyTheme(this.userData.theme);
 
       // BAN-Watch (live)
-      const stopBanWatch = db.collection('users').doc(this.user.uid)
-        .onSnapshot(snap => {
+      const stopBanWatch = db
+        .collection("users")
+        .doc(this.user.uid)
+        .onSnapshot((snap) => {
           const banned = !!snap.data()?.isBanned;
           if (banned) {
-            alert('Dein Account wurde gesperrt. Bitte kontaktiere den Support.');
+            alert(
+              "Dein Account wurde gesperrt. Bitte kontaktiere den Support."
+            );
             logout();
           }
         });
@@ -404,54 +432,72 @@ mounted() {
       });
       this._unsubs.push(stopEvents);
 
+      // Listener für Online-Benutzer starten
+      const stopOnlineUsersListener = listenForOnlineUsers((users) => {
+        this.onlineUsers = users
+          .filter((u) => u.id !== this.user.uid) // eigenen User ausblenden
+          .filter((u) => !HIDE_FROM_GLOBAL_ONLINE.has(u.id)); // Admin ausblenden
+      }, 2);
+      this._unsubs.push(stopOnlineUsersListener);
+
       // Map
       this.mapFx = createMapFeature(this);
-      this.$nextTick(() => this.mapFx.mountIfNeeded());
 
       // Chat (live)
       this.chatFx = createChatFeature(this, this);
 
-      // Stats
-      await this.refreshStats();
+      this.setView(this.currentView);
     },
 
     cleanupListeners() {
-      // 1) alle dynamischen Firestore-/Feature-Listener beenden
-      try {
-        this._unsubs?.forEach((u) => u && u());
-      } catch {}
+      // 1) Falls wir gerade im Global-Chat waren: Flag zurücknehmen
+      if (this.user?.uid) {
+        // fire-and-forget; cleanupListeners ist nicht async
+        try {
+          setGlobalChatActive(this.user.uid, false);
+        } catch {}
+      }
+
+      // 2) Heartbeat sofort stoppen (macht dich insgesamt offline)
+      if (this.user?.uid) {
+        try {
+          setGlobalChatActive(this.user.uid, false);
+        } catch {}
+      }
+      stopPresenceHeartbeat();
+
+      // 3) Alle Live-Listener/Features sauber abbauen
+      this._unsubs?.forEach((u) => u && u());
       this._unsubs = [];
 
-      // 2) Feature-spezifisch aufräumen
-      try {
-        this.mapFx?.teardown();
-      } catch {}
-      try {
-        this.chatFx?.unsubscribe?.();
-        this.chatFx = null;
-      } catch {}
+      this.mapFx?.teardown();
+      this.chatFx?.unsubscribe?.();
+      this.chatFx = null;
 
-      // 3) Intervall stoppen
+      // (falls vorhanden) Global-Chat-Feature auch abbauen
+      this.globalChatFx?.teardown?.();
+      this.globalChatFx = null;
+
+      // 4) UI/Intervals/Events
       if (this.bannerInterval) {
         clearInterval(this.bannerInterval);
         this.bannerInterval = null;
       }
 
-      // 4) DOM-Event-Listener sauber entfernen
-      try {
-        document.removeEventListener("click", this._onDocClick);
-      } catch {}
-      try {
-        document.removeEventListener("click", this._onShareOutside);
-      } catch {}
-      try {
-        document.removeEventListener("keydown", this._onKeyDown);
-      } catch {}
-
-      // 5) Referenzen nullen
+      document.removeEventListener("click", this._onDocClick);
+      document.removeEventListener("click", this._onShareOutside);
+      document.removeEventListener("keydown", this._onKeyDown);
+      if (this._onPageHide) {
+        window.removeEventListener("pagehide", this._onPageHide);
+        this._onPageHide = null;
+      }
       this._onDocClick = null;
       this._onShareOutside = null;
       this._onKeyDown = null;
+
+      // 5) Optionale Aufräum-Resets
+      this.onlineUsers = [];
+      this.currentView = "dashboard";
     },
 
     // ---------------- Auth ----------------
@@ -478,7 +524,6 @@ mounted() {
       logout();
       this.showMenu = false;
     },
-
     resetPasswordFlow() {
       this.resetEmail = this.form?.email || "";
       this.showReset = true;
@@ -540,10 +585,29 @@ mounted() {
 
     // ---------------- Statistics ----------------
     async refreshStats() {
-      this.consumptionChart = await refreshStatsFor(
-        this.user.uid,
-        this.consumptionChart
-      );
+      if (!this.user.uid) return;
+      this.$nextTick(async () => {
+        try {
+          if (document.getElementById("consumptionChart")) {
+            const { chartStats, rankings } = await loadAdvancedConsumptionStats(
+              this.user.uid,
+              this.statsTimeRange
+            );
+            this.statsRankings = rankings;
+            this.consumptionChart = renderChart(
+              "consumptionChart",
+              chartStats,
+              this.consumptionChart
+            );
+          }
+        } catch (e) {
+          console.error("Statistik-Fehler:", e);
+        }
+      });
+    },
+    setStatsRange(range) {
+      this.statsTimeRange = range;
+      this.refreshStats();
     },
 
     // ---------------- Map ----------------
@@ -566,7 +630,6 @@ mounted() {
     openGlobalChat() {
       if (this.currentView !== "globalChat") this.setView("globalChat");
     },
-
     sendGlobalMessage() {
       this.globalChatFx?.send();
     },
@@ -584,25 +647,18 @@ mounted() {
 
     // ---------------- Notifications ----------------
     async handleNotificationClick(n) {
-      // 1) als gelesen markieren (falls nötig)
       if (!n.read) {
         try {
           await markNotif(n.id);
         } catch {}
       }
-
-      // 2) Nur Chat-Notis öffnen
       if (n.type !== "chat_message") return;
-
-      // 3) Partner ermitteln (senderId bevorzugt; Fallback aus chatId "a_b")
       let partnerId = n.senderId;
       if (!partnerId && n.chatId && typeof n.chatId === "string") {
         const ids = n.chatId.split("_");
         partnerId = ids.find((id) => id !== this.user.uid) || ids[0];
       }
       if (!partnerId) return;
-
-      // 4) Freund aus Liste oder Profil nachladen
       let friend = this.friends.find((f) => f.id === partnerId);
       if (!friend) {
         try {
@@ -616,8 +672,6 @@ mounted() {
           friend = { id: partnerId };
         }
       }
-
-      // 5) Dropdown schließen, zum Dashboard, Chat öffnen & fokussieren
       this.showNotifications = false;
       if (this.currentView !== "dashboard") this.setView("dashboard");
       await this.$nextTick();
@@ -656,7 +710,6 @@ mounted() {
       }
       this.closeShareMenu();
     },
-    // optional QR (falls du magst)
     async shareQR() {
       try {
         const code = this.user?.uid || "";
@@ -668,10 +721,8 @@ mounted() {
             if (!err) div.appendChild(canvas);
           }
         );
-        // sehr simpel: altes Alert-Fenster wiederverwenden
         this.alertMessage = "Dein QR-Code (Freundschaftscode):";
         this.showAlert = true;
-        // kleines Timeout: Canvas nach dem Öffnen in den Alert einsetzen
         setTimeout(() => {
           document.querySelector(".alert-content")?.appendChild(div);
         }, 0);

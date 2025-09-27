@@ -3,6 +3,7 @@ import { db, auth } from "../services/firebase-config.js";
 import {
   loadGlobalAggregates,
   exportAggregatesAsCsv,
+  exportAnonymousConsumptionsAsCsv,
 } from "../services/admin-aggregates.service.js";
 
 export const adminMixin = {
@@ -16,19 +17,25 @@ export const adminMixin = {
         banners: [],
         aggregates: { total: 0, byProduct: [], byDevice: [], byPair: [] },
 
-        // Users-Tab
+        // Users: Filter / Sort / Pagination
         usersQuery: "",
         usersSort: "displayName", // 'displayName' | 'createdAt' | 'lastActiveAt'
         usersAsc: true,
-        usersPage: 1,
         usersPageSize: 20,
+
+        usersStatusFilter: "active", // 'active' | 'banned'
+        usersPageActive: 1,
+        usersPageBanned: 1,
       },
+
+      // Formulare
       adminEventForm: { name: "", address: "", lat: null, lng: null },
       bannerForm: { slot: "landing", imageUrl: "", alt: "", order: 0 },
     };
   },
 
   computed: {
+    /* ====================== Users: Filter/Sort ====================== */
     adminUsersFiltered() {
       let list = [...this.admin.users];
 
@@ -60,24 +67,81 @@ export const adminMixin = {
       return list;
     },
 
-    adminUsersPageItems() {
-      const start = (this.admin.usersPage - 1) * this.admin.usersPageSize;
-      return this.adminUsersFiltered.slice(
-        start,
-        start + this.admin.usersPageSize
+    // Split in aktiv / gesperrt
+    adminActiveUsers() {
+      return this.adminUsersFiltered.filter((u) => !u._banned);
+    },
+    adminBannedUsers() {
+      return this.adminUsersFiltered.filter((u) => !!u._banned);
+    },
+
+    // Counts
+    adminActiveUsersCount() {
+      return this.adminActiveUsers.length;
+    },
+    adminBannedUsersCount() {
+      return this.adminBannedUsers.length;
+    },
+
+    // Total Pages
+    adminActiveUsersTotalPages() {
+      return Math.max(
+        1,
+        Math.ceil(this.adminActiveUsers.length / this.admin.usersPageSize)
+      );
+    },
+    adminBannedUsersTotalPages() {
+      return Math.max(
+        1,
+        Math.ceil(this.adminBannedUsers.length / this.admin.usersPageSize)
       );
     },
 
-    adminUsersTotalPages() {
-      return Math.max(
-        1,
-        Math.ceil(this.adminUsersFiltered.length / this.admin.usersPageSize)
+    // Page Items
+    adminActiveUsersPageItems() {
+      const p = Math.min(
+        this.admin.usersPageActive,
+        this.adminActiveUsersTotalPages
       );
+      const start = (p - 1) * this.admin.usersPageSize;
+      return this.adminActiveUsers.slice(start, start + this.admin.usersPageSize);
+    },
+    adminBannedUsersPageItems() {
+      const p = Math.min(
+        this.admin.usersPageBanned,
+        this.adminBannedUsersTotalPages
+      );
+      const start = (p - 1) * this.admin.usersPageSize;
+      return this.adminBannedUsers.slice(start, start + this.admin.usersPageSize);
+    },
+
+    // Für das UI (abhängig von aktiv/gesperrt)
+    usersListForUi() {
+      return this.admin.usersStatusFilter === "active"
+        ? this.adminActiveUsersPageItems
+        : this.adminBannedUsersPageItems;
+    },
+    usersTotalPagesForUi() {
+      return this.admin.usersStatusFilter === "active"
+        ? this.adminActiveUsersTotalPages
+        : this.adminBannedUsersTotalPages;
+    },
+    usersPageForUi: {
+      get() {
+        return this.admin.usersStatusFilter === "active"
+          ? this.admin.usersPageActive
+          : this.admin.usersPageBanned;
+      },
+      set(v) {
+        if (this.admin.usersStatusFilter === "active")
+          this.admin.usersPageActive = v;
+        else this.admin.usersPageBanned = v;
+      },
     },
   },
 
   methods: {
-    /* --- Entry Point: beim Login aufrufen --- */
+    /* ====================== Entry Point ====================== */
     async initAdminFeature(user) {
       this.isAdmin = !!user && user.uid === "ZAz0Bnde5zYIS8qCDT86aOvEDX52";
       console.log("[admin] isAdmin:", this.isAdmin);
@@ -98,63 +162,53 @@ export const adminMixin = {
     },
 
     /* ====================== Users ====================== */
-
-    // Lädt profiles_public + users (für E-Mail) + banlist (Flag)
+    // Lädt profiles_public + users (E-Mail) + banlist (Flag)
     async adminReloadUsers() {
-      const [pubSnap, privSnap, banSnap] = await Promise.all([
-        db.collection("profiles_public").limit(500).get(),
-        db.collection("users").limit(500).get(),
-        db
-          .collection("banlist")
-          .get()
-          .catch(() => ({ docs: [] })),
-      ]);
+      try {
+        const [pubSnap, privSnap, banSnap] = await Promise.all([
+          db.collection("profiles_public").limit(20).get(),
+          db.collection("users").limit(20).get(),
+          db.collection("banlist").get(),
+        ]);
 
-      const emailByUid = new Map(
-        privSnap.docs.map((d) => [d.id, (d.data() || {}).email || null])
-      );
-      const banned = new Set(banSnap.docs.map((d) => d.id));
+        const emailByUid = new Map(
+          privSnap.docs.map((d) => [d.id, (d.data() || {}).email || null])
+        );
+        const banned = new Set(banSnap.docs.map((d) => d.id));
 
-      this.admin.users = pubSnap.docs.map((d) => {
-        const data = d.data() || {};
-        return {
-          id: d.id,
-          ...data,
-          _email: emailByUid.get(d.id) || null,
-          _banned: banned.has(d.id),
-          _action: "",
-        };
-      });
-      this.admin.usersPage = 1;
-    },
-
-    adminChangeSort(key) {
-      if (this.admin.usersSort === key) {
-        this.admin.usersAsc = !this.admin.usersAsc;
-      } else {
-        this.admin.usersSort = key;
-        this.admin.usersAsc = true;
+        this.admin.users = pubSnap.docs.map((d) => {
+          const data = d.data() || {};
+          return {
+            id: d.id,
+            ...data,
+            _email: emailByUid.get(d.id) || null,
+            _banned: banned.has(d.id),
+            _action: "",
+          };
+        });
+      } catch (e) {
+        console.error("[adminReloadUsers]", e);
+        alert(e?.message || "Konnte Nutzer nicht laden");
+      } finally {
+        // Page-Reset
+        this.admin.usersPageActive = 1;
+        this.admin.usersPageBanned = 1;
       }
     },
-    adminNextPage() {
-      if (this.admin.usersPage < this.adminUsersTotalPages)
-        this.admin.usersPage++;
-    },
-    adminPrevPage() {
-      if (this.admin.usersPage > 1) this.admin.usersPage--;
-    },
 
-    // Anzeigename ändern (public)
+    // Anzeigename ändern (nur wenn wirklich geändert)
     async adminSaveUser(u) {
       try {
-        const displayName = (u.displayName || "").trim();
-        await db.collection("profiles_public").doc(u.id).set(
-          {
-            displayName,
-            updatedAt: new Date(),
-          },
-          { merge: true }
-        );
+        const newName = (u.displayName || "").trim();
+        const ref = db.collection("profiles_public").doc(u.id);
+        const snap = await ref.get();
+        const cur = (snap.exists ? (snap.data() || {}).displayName : "") || "";
+
+        if (cur === newName) {
+          return alert("Keine Änderungen – nichts zu speichern.");
+        }
+
+        await ref.set({ displayName: newName }, { merge: true });
         alert("Gespeichert.");
       } catch (e) {
         alert(e?.message || "Speichern fehlgeschlagen");
@@ -173,103 +227,78 @@ export const adminMixin = {
       }
     },
 
-    // Nutzer sperren (banlist + users.isBanned)
+    // Nutzer sperren (Ban) – prüft Status & nutzt Batch
     async adminBanUser(uid, reason = "") {
       if (!uid) return;
       if (!confirm(`Nutzer ${uid} wirklich sperren?`)) return;
 
-      // 1) Autoritative Sperrliste
-      await db
-        .collection("banlist")
-        .doc(uid)
-        .set(
+      try {
+        const userRef = db.collection("users").doc(uid);
+        const banRef = db.collection("banlist").doc(uid);
+        const [userSnap, banSnap] = await Promise.all([userRef.get(), banRef.get()]);
+
+        const alreadyBanned = !!(userSnap.data() || {}).isBanned || banSnap.exists;
+        if (alreadyBanned) {
+          const u = this.admin.users.find((x) => x.id === uid);
+          if (u) u._banned = true;
+          return alert("Nutzer ist bereits gesperrt (keine DB-Schreibvorgänge).");
+        }
+
+        const batch = db.batch();
+        batch.set(
+          banRef,
           {
-            reason: reason || null,
+            ...(reason ? { reason } : {}),
             bannedAt: new Date(),
           },
           { merge: false }
         );
+        batch.set(userRef, { isBanned: true, bannedAt: new Date() }, { merge: true });
+        await batch.commit();
 
-      // 2) Spiegel im users/{uid} (nur Admin darf setzen)
-      await db
-        .collection("users")
-        .doc(uid)
-        .set({ isBanned: true, bannedAt: new Date() }, { merge: true });
-
-      const u = this.admin.users.find((x) => x.id === uid);
-      if (u) u._banned = true;
-      alert("Gesperrt.");
-    },
-
-        // Aktion aus Dropdown ausführen
-    handleUserAction(u) {
-      const act = u._action;
-      // Auswahl zurücksetzen, damit das Dropdown wieder "Aktion wählen…" zeigt
-      u._action = "";
-      if (!act) return;
-
-      switch (act) {
-        case "save":
-          return this.adminSaveUser(u);
-        case "reset":
-          if (!u._email)
-            return alert("Für diesen Nutzer ist keine E-Mail hinterlegt.");
-          return this.adminSendPasswordReset(u._email);
-        case "ban":
-          return this.adminBanUser(u.id);
-        case "unban":
-          return this.adminUnbanUser(u.id);
-        case "wipe":
-          return this.adminWipeUserData(u.id);
-        default:
-          return;
+        const u = this.admin.users.find((x) => x.id === uid);
+        if (u) u._banned = true;
+        alert("Gesperrt.");
+      } catch (e) {
+        console.error("[adminBanUser]", e);
+        alert(e?.message || "Sperren fehlgeschlagen (Rules?)");
       }
     },
 
-// Nutzer sperren (banlist + users.isBanned)
-async adminBanUser(uid, reason = '') {
-  try {
-    if (!uid) return;
-    if (!confirm(`Nutzer ${uid} wirklich sperren?`)) return;
+    // Sperre aufheben (Unban) – prüft Status & nutzt Batch
+    async adminUnbanUser(uid) {
+      if (!uid) return;
+      if (!confirm(`Sperre für ${uid} aufheben?`)) return;
 
-    await db.collection('banlist').doc(uid).set({
-      reason: reason || null,
-      bannedAt: new Date(),
-    }, { merge: false });
+      try {
+        const userRef = db.collection("users").doc(uid);
+        const banRef = db.collection("banlist").doc(uid);
 
-    await db.collection('users').doc(uid).set({
-      isBanned: true,
-      bannedAt: new Date(),
-    }, { merge: true });
+        const [userSnap, banSnap] = await Promise.all([userRef.get(), banRef.get()]);
+        const wasBanned = !!(userSnap.data() || {}).isBanned || banSnap.exists;
 
-    const u = this.admin.users.find(x => x.id === uid);
-    if (u) u._banned = true;
-    alert('Gesperrt.');
-  } catch (e) {
-    console.error('[adminBanUser]', e);
-    alert(e?.message || 'Sperren fehlgeschlagen (Rules?)');
-  }
-},
+        if (!wasBanned) {
+          const u = this.admin.users.find((x) => x.id === uid);
+          if (u) u._banned = false;
+          return alert("Nutzer ist nicht gesperrt (keine DB-Schreibvorgänge).");
+        }
 
-// Sperre aufheben (banlist + users.isBanned)
-async adminUnbanUser(uid) {
-  try {
-    if (!uid) return;
-    if (!confirm(`Sperre für ${uid} aufheben?`)) return;
+        const batch = db.batch();
+        if (banSnap.exists) batch.delete(banRef);
+        batch.set(userRef, { isBanned: false }, { merge: true });
+        await batch.commit();
 
-    await db.collection('banlist').doc(uid).delete();
-    await db.collection('users').doc(uid).set({ isBanned: false }, { merge: true });
-
-    const u = this.admin.users.find(x => x.id === uid);
-    if (u) u._banned = false;
-    alert('Entsperrt.');
-  } catch (e) {
-    console.error('[adminUnbanUser]', e);
-    alert(e?.message || 'Entsperren fehlgeschlagen');
-  }
-},
+        const u = this.admin.users.find((x) => x.id === uid);
+        if (u) u._banned = false;
+        alert("Entsperrt.");
+      } catch (e) {
+        console.error("[adminUnbanUser]", e);
+        alert(e?.message || "Entsperren fehlgeschlagen");
+      }
+    },
 
     // App-Daten löschen/anon (kein Auth-Delete!)
+    // Hinweis: Für echte Massenlöschung (consumptions) ist eine Cloud Function mit Admin SDK effizienter.
     async adminWipeUserData(uid) {
       if (!uid) return;
       if (
@@ -284,7 +313,7 @@ async adminUnbanUser(uid) {
         await db.collection("profiles_public").doc(uid).delete();
       } catch {}
 
-      // 2) Privates Profil anonymisieren (nicht komplett löschen)
+      // 2) Privates Profil anonymisieren (ein Write)
       try {
         await db
           .collection("users")
@@ -301,7 +330,7 @@ async adminUnbanUser(uid) {
           );
       } catch {}
 
-      // 3) Konsum-Einträge löschen (Batchweise)
+      // 3) Konsum-Einträge löschen (Client-seitige Schleife = viele Writes)
       try {
         const batchSize = 300;
         let lastDoc = null;
@@ -323,7 +352,7 @@ async adminUnbanUser(uid) {
         }
       } catch {}
 
-      // 4) Friend-Requests soft cleanup (-> 'removed')
+      // 4) Friend-Requests soft cleanup (Batch)
       try {
         const fr = await db
           .collection("friend_requests")
@@ -354,10 +383,64 @@ async adminUnbanUser(uid) {
       alert("App-Daten bereinigt/anonymisiert. (Auth-Account besteht weiter)");
     },
 
+    // Dropdown-Aktionen
+    handleUserAction(u) {
+      const act = u._action;
+      u._action = "";
+      if (!act) return;
+
+      switch (act) {
+        case "save":
+          return this.adminSaveUser(u);
+        case "reset":
+          if (!u._email)
+            return alert("Für diesen Nutzer ist keine E-Mail hinterlegt.");
+          return this.adminSendPasswordReset(u._email);
+        case "ban":
+          return this.adminBanUser(u.id).finally(() => {
+            // Nutzer wandert nach „gesperrt“
+            this.admin.usersPageActive = Math.min(
+              this.admin.usersPageActive,
+              this.adminActiveUsersTotalPages
+            );
+            this.admin.usersStatusFilter = "banned";
+          });
+        case "unban":
+          return this.adminUnbanUser(u.id).finally(() => {
+            // Nutzer wandert nach „aktiv“
+            this.admin.usersPageBanned = Math.min(
+              this.admin.usersPageBanned,
+              this.adminBannedUsersTotalPages
+            );
+            this.admin.usersStatusFilter = "active";
+          });
+        case "wipe":
+          return this.adminWipeUserData(u.id);
+        default:
+          return;
+      }
+    },
+
+    // Pagination (UI-gebunden)
+    usersPrevPageForUi() {
+      this.usersPageForUi = Math.max(1, this.usersPageForUi - 1);
+    },
+    usersNextPageForUi() {
+      this.usersPageForUi = Math.min(
+        this.usersTotalPagesForUi,
+        this.usersPageForUi + 1
+      );
+    },
+
     /* ====================== Events ====================== */
     async adminReloadEvents() {
-      const es = await db.collection("events").orderBy("name").get();
-      this.admin.events = es.docs.map((d) => ({ id: d.id, ...d.data() }));
+      try {
+        const es = await db.collection("events").orderBy("name").get();
+        this.admin.events = es.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } catch (e) {
+        console.error("[adminReloadEvents]", e);
+        alert(e?.message || "Events konnten nicht geladen werden");
+      }
     },
 
     async adminCreateEvent() {
@@ -398,19 +481,19 @@ async adminUnbanUser(uid) {
 
     /* ====================== Banners ====================== */
     async adminReloadBanners() {
-      const bs = await db
-        .collection("banners")
-        .orderBy("order")
-        .get()
-        .catch(() => ({ docs: [] }));
-      this.admin.banners = bs.docs.map((d) => ({ id: d.id, ...d.data() }));
+      try {
+        const bs = await db.collection("banners").orderBy("order").get();
+        this.admin.banners = bs.docs.map((d) => ({ id: d.id, ...d.data() }));
+      } catch (e) {
+        console.error("[adminReloadBanners]", e);
+        this.admin.banners = [];
+      }
     },
 
     async adminCreateBanner() {
       try {
         const b = this.bannerForm;
-        if (!b.slot || !b.imageUrl)
-          return alert("slot & imageUrl erforderlich");
+        if (!b.slot || !b.imageUrl) return alert("slot & imageUrl erforderlich");
         const ref = await db.collection("banners").add({
           slot: b.slot,
           imageUrl: b.imageUrl,
@@ -450,6 +533,12 @@ async adminUnbanUser(uid) {
       } catch (e) {
         alert(e?.message || "Export fehlgeschlagen");
       }
+    },
+    adminExportAnonymousCsv() {
+      alert("Der anonyme Export wird vorbereitet. Dies kann einen Moment dauern...");
+      exportAnonymousConsumptionsAsCsv().catch((e) => {
+        alert(e?.message || "Der anonyme Export ist fehlgeschlagen.");
+      });
     },
   },
 };
